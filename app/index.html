@@ -1,0 +1,971 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>WorkBuddy 总控</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --line:#e3e6eb; --text:#1f2329; --sub:#646a73; --blue:#3370ff; --green:#20a162; --red:#e34d59; --amber:#d48806; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; gap:12px; padding:12px 20px; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+  header h1 { font-size:17px; margin:0; }
+  header .sub { color:var(--sub); font-size:13px; }
+  header button { margin-left:auto; white-space:nowrap; }
+  .hdr-right { margin-left:auto; display:flex; gap:8px; align-items:center; }
+  .hdr-right button { margin-left:0; }
+  #logoutBtn { color:var(--sub); }
+  .tip { background:#fffbe6; border-bottom:1px solid #ffe58f; color:#874d00; padding:8px 20px; font-size:13px; display:flex; gap:10px; align-items:center; }
+  .tip a { color:#874d00; }
+  @media (max-width: 600px) { header .sub { display:none; } }
+  main { display:grid; grid-template-columns: 300px 1fr; gap:16px; padding:16px 20px; max-width:1500px; margin:0 auto; }
+  main > section { min-width:0; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  h2 { font-size:14px; margin:0 0 10px; display:flex; align-items:center; gap:8px; }
+  h2 .n { color:var(--sub); font-weight:normal; }
+  .m { display:flex; align-items:flex-start; gap:8px; padding:8px 6px; border-radius:8px; cursor:pointer; }
+  .m:hover { background:#f2f3f5; }
+  .m .nm { font-weight:600; }
+  .m .meta { color:var(--sub); font-size:12px; word-break:break-all; }
+  .dot { width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:4px; background:#c0c4cc; }
+  .dot.on { background:var(--green); } .dot.busy { background:var(--amber); }
+  textarea { width:100%; min-height:96px; resize:vertical; border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; }
+  input[type=text] { border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:inherit; width:260px; max-width:100%; }
+  button { border:1px solid var(--line); background:#fff; border-radius:6px; padding:6px 14px; font:inherit; cursor:pointer; }
+  button.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:10px; }
+  .muted { color:var(--sub); font-size:12px; }
+  .task { border-top:1px solid var(--line); padding:10px 4px; cursor:pointer; }
+  .task:first-child { border-top:0; }
+  .task.sel { background:#f0f5ff; border-radius:8px; }
+  .task.pick { background:#fff8f0; border-radius:8px; }
+  .task .thead { display:flex; align-items:flex-start; gap:8px; }
+  .task .tpick { flex:none; margin:5px 0 0; cursor:pointer; }
+  .task .p { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mini { flex:none; font-size:12px; line-height:1.5; padding:1px 8px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--sub); cursor:pointer; }
+  .mini:hover { color:var(--blue); border-color:var(--blue); }
+  .mini.ok { color:var(--green); border-color:var(--green); }
+  .mini.danger:hover { color:var(--red); border-color:var(--red); }
+  .tbar { margin-left:auto; display:flex; gap:6px; align-items:center; }
+  .tbar button { font-size:12px; padding:3px 10px; }
+  .tbar button.danger:not(:disabled) { color:var(--red); border-color:#f0c2c6; }
+  .tabs { display:flex; gap:4px; background:#f2f3f5; border-radius:8px; padding:3px; }
+  .tabs button { margin-left:0; border:0; background:transparent; padding:4px 14px; border-radius:6px; color:var(--sub); font-size:13px; }
+  .tabs button.on { background:#fff; color:var(--text); font-weight:600; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  #viewPrompts { grid-template-columns:1fr; }
+  .pm { border-top:1px solid var(--line); padding:10px 4px; }
+  .pm:first-of-type { border-top:0; }
+  .pm.pick { background:#fff8f0; border-radius:8px; }
+  .pm .pmh { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .pm .pmh .meta { flex:1; min-width:180px; color:var(--sub); font-size:12px; }
+  .pm .ptext { white-space:pre-wrap; word-break:break-word; margin:6px 0 0; padding-left:22px; font-size:13px; }
+  .pm .ptext.clamp { max-height:6.6em; overflow:hidden; -webkit-mask-image:linear-gradient(180deg,#000 60%,transparent); mask-image:linear-gradient(180deg,#000 60%,transparent); }
+  .pm .more { margin-left:22px; font-size:12px; color:var(--blue); cursor:pointer; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+  .chip { font-size:12px; padding:0 8px; border-radius:10px; background:#f2f3f5; }
+  .chip.wait { color:var(--amber); }
+  .chip.p0 { background:#fdecea; color:#c0392b; } .chip.p1 { background:#fff4e0; color:#b9770e; } .chip.p2 { background:#e8f4fd; color:#1f6fb2; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .seg label { padding:5px 12px; cursor:pointer; font-size:13px; }
+  .seg input { display:none; }
+  .seg label:has(input:checked) { background:var(--blue); color:#fff; }
+  .s-queued { color:var(--sub); } .s-sent,.s-running { color:var(--amber); } .s-done { color:var(--green); } .s-failed { color:var(--red); } .s-stopped { color:var(--sub); }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:12px; margin-top:12px; }
+  .run { border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; max-height:560px; background:#fff; }
+  .run .hd { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); }
+  .run .hd b { flex:1; }
+  .run .body { overflow:auto; padding:8px 12px; font-size:13px; flex:1; }
+  .it { margin:3px 0; white-space:pre-wrap; word-break:break-word; }
+  .it.tool { color:#5b6ef0; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+  .it.info { color:var(--sub); font-size:12px; }
+  .it.err { color:var(--red); }
+  .result { border-top:1px dashed var(--line); margin-top:8px; padding-top:8px; white-space:pre-wrap; word-break:break-word; }
+  .result.bad { color:var(--red); }
+  code.cmd { display:block; background:#1f2329; color:#e8e8e8; padding:8px 10px; border-radius:6px; font-size:12px; word-break:break-all; white-space:pre-wrap; margin:6px 0; }
+  .login { max-width:420px; margin:12vh auto; }
+  @media (max-width: 460px) { .login { margin:12vh 12px; } }
+  .empty { color:var(--sub); padding:20px 0; text-align:center; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const ST = { queued:'排队', sent:'已发出', running:'在干', done:'完成', failed:'没成', stopped:'已停' };
+const fmtT = (ms) => ms ? new Date(ms).toLocaleString('zh-CN', { hour12:false, month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '';
+const dur = (a, b) => { if (!a) return ''; const s = Math.round(((b || Date.now()) - a) / 1000); return s < 60 ? s + ' 秒' : Math.floor(s/60) + ' 分 ' + (s%60) + ' 秒'; };
+// http 下不是安全上下文，navigator.clipboard 不可用，退回 textarea + execCommand
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  return new Promise((res, rej) => {
+    const ta = document.createElement('textarea');
+    ta.value = String(text ?? '');
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-1000px;left:-1000px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select(); ta.setSelectionRange(0, ta.value.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta);
+    ok ? res() : rej(new Error('copy failed'));
+  });
+}
+
+// 老书签可能带着 ?key=（机器口令）：先记下来，等会用它在后台换一次登录，之后只靠浏览器里的登录凭证
+const URL_KEY = new URLSearchParams(location.search).get('key') || '';
+if (URL_KEY) history.replaceState(null, '', location.pathname + location.hash);
+let KEY = URL_KEY || localStorage.getItem('fleetKey') || '';
+let state = { machines: [], tasks: [] }, selTask = null, detail = null, picked = new Set(JSON.parse(localStorage.getItem('fleetPicked') || '[]'));
+let taskPicked = new Set(); // 勾了待删的任务（不存本机：删除危险，刷新就清空）
+let VIEW = 'tasks';         // 当前页面：tasks 任务 / prompts 提示词
+let promptList = [], promptTotal = 0, promptPicked = new Set(), promptQ = '';
+let MODE = localStorage.getItem('fleetMode') === 'all' ? 'all' : 'pool';
+let AFTER = null; // 接在哪件后面：{ id, prompt }
+let sessPicked = null; // 接着哪条会话做：{ session, machine, dir, prompt, at, via }（不存本机，刷新即清）
+
+async function api(path, opt = {}) {
+  const { silent, ...rest } = opt;
+  const r = await fetch(path, { ...rest, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...(KEY ? { 'x-fleet-key': KEY } : {}), ...(rest.headers || {}) } });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) {
+    // 静默检查（启动时探登录状态）不能把手上还留着的口令清掉，否则没法用它换登录
+    if (!silent) { KEY = ''; localStorage.removeItem('fleetKey'); renderLogin('登录过期了，请重新输入口令'); }
+    throw new Error('401');
+  }
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+
+function renderLogin(msg = '') {
+  $('#app').innerHTML = `<div class="card login"><h2>WorkBuddy 总控</h2>
+    <p class="muted">内部管理页面，需要口令才能进。</p>
+    <div class="row"><input id="k" type="password" placeholder="登录口令" autocomplete="current-password"><button class="primary" id="go">进去</button></div>
+    <p style="color:var(--red)">${esc(msg)}</p>
+    <p class="muted">口令由总控管理员设置；忘了就让管理员在总控那台机器的 data/pass.txt 里看或改。</p></div>`;
+  const input = $('#k');
+  const go = () => login(input.value.trim());
+  $('#go').onclick = go;
+  input.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  input.focus();
+}
+async function login(pass) {
+  if (!pass) return;
+  const btn = $('#go');
+  if (btn) { btn.disabled = true; btn.textContent = '验证中…'; }
+  try {
+    const r = await fetch('/api/login', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pass }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { KEY = ''; localStorage.removeItem('fleetKey'); return renderLogin(j.error || '口令不对'); }
+    KEY = ''; localStorage.removeItem('fleetKey'); // 已经拿到登录凭证，浏览器里不再留口令
+    boot();
+  } catch (e) { renderLogin('连不上总控：' + e.message); }
+}
+
+function shell() {
+  $('#app').innerHTML = `
+  <header><h1>WorkBuddy 总控</h1><span class="tabs"><button class="on" data-view="tasks">任务</button><button data-view="prompts">提示词</button></span><span class="sub">指令交给空闲的电脑干，也能让每台都做一遍</span>
+    <span class="hdr-right"><button id="upBtn" title="给还没升级的电脑发一条升级指令">升级连接程序</button><button id="addBtn">加电脑</button><button id="logoutBtn" title="退出登录">退出</button></span></header>
+  <div class="tip" id="secTip" style="display:none"><span>⚠ 网页口令还是默认的（跟机器口令同一串）：拿到过旧链接的人也能进。建议改一个自己的。</span><a href="#" id="secGo">去改</a></div>
+  <main id="viewTasks">
+    <section>
+      <div class="card"><h2>电脑 <span class="n" id="mcount"></span></h2>
+        <div class="row" style="margin:0 0 10px"><button id="pickAll">全选在线的</button><button id="pickNone">都不选</button><span class="muted" style="font-size:12px">不勾就是全部电脑都算。</span></div>
+        <div id="mlist"></div></div>
+      <div class="card" id="joinCard" style="margin-top:16px; display:none"></div>
+    </section>
+    <section>
+      <div class="card">
+        <div class="row" style="margin:0 0 10px">
+          <span class="seg"><label><input type="radio" name="mode" value="pool" ${MODE === 'pool' ? 'checked' : ''}>派给空闲的电脑</label><label><input type="radio" name="mode" value="all" ${MODE === 'all' ? 'checked' : ''}>每台都做一遍</label></span>
+          <span id="poolOpts" class="row" style="margin:0">
+            <label class="muted"><input type="checkbox" id="split"> 每行算一件活</label>
+            <label class="muted" title="后一行等前一行做完，带上它的结果接着干，优先交给做前一行的那台，不用同步文件"><input type="checkbox" id="chain"> 按行接力</label>
+          </span>
+          <select id="prio" title="等电脑的活先派紧急的，再派重要的，最后派加大力度发展的"><option value="0">紧急</option><option value="1" selected>重要</option><option value="2">加大力度发展</option></select>
+          <label class="muted" title="连接程序自动做：开工前先拉最新代码，做完自动提交并推送；冲突或推送失败会标成没做成"><input type="checkbox" id="git"> 代码用 Git 同步</label>
+        </div>
+        <div class="row" style="margin:0 0 10px">
+          <label class="muted" title="让某台电脑用指定的专家干活（WorkBuddy 里的专家包，例如高级开发工程师）">专家 <select id="expert"></select></label>
+          <label class="muted" title="指定这活用的模型；不填就用那台电脑自己的默认模型">模型 <select id="model"></select></label>
+          <span class="muted" id="expertHint"></span>
+        </div>
+        <div class="row" id="sessBar" style="margin:0 0 10px">
+          <span class="muted">会话 <span id="sessChip" class="chip">新会话</span></span>
+          <button id="sessPick" title="列出最近跑过的会话，挑一条接着做（只派给会话所在的那台电脑）">选一条旧会话</button>
+          <button id="sessClear" style="display:none">改回新会话</button>
+          <span class="muted" id="sessHint"></span>
+        </div>
+        <div id="sessModal" style="display:none; position:fixed; inset:0; background:rgba(20,24,34,.38); z-index:60; align-items:center; justify-content:center">
+          <div class="card" style="width:min(760px,92vw); max-height:82vh; overflow:auto; margin:0">
+            <h2 style="margin-top:0">选一条会话接着做<button id="sessClose" style="margin-left:auto">关</button></h2>
+            <p class="muted" style="margin-top:0">会话只存在于跑它的那台电脑上。选了之后机器和目录都会锁死，不能改。</p>
+            <input type="text" id="sessSearch" placeholder="搜会话 id、任务内容、目录、机器…" style="width:100%; margin-bottom:10px">
+            <div id="sessList"></div>
+          </div>
+        </div>
+        <div id="resModal" style="display:none; position:fixed; inset:0; background:rgba(20,24,34,.38); z-index:70; align-items:center; justify-content:center">
+          <div class="card" id="resBox" style="width:min(900px,94vw); max-height:86vh; overflow:auto; margin:0"></div>
+        </div>
+        <div id="afterBar" class="muted" style="display:none; margin-bottom:8px"></div>
+        <textarea id="prompt" placeholder="要干什么？例如：把 ~/Downloads 里的发票按月份整理好，列个清单给我（Ctrl+Enter 发送）"></textarea>
+        <div class="row">
+          <button class="primary" id="sendBtn">发出去</button>
+          <span id="target" class="muted"></span>
+          <label class="muted"><input type="checkbox" id="cont"> 接着上一轮聊</label>
+          <input type="text" id="workdir" title="可填绝对路径（如 D:\code\项目 或 /Users/你/code/项目）；只填文件夹名（如 linmo-pig-full）会放在那台电脑的默认目录下；不填就用默认目录" placeholder="在哪个文件夹干（文件夹名＝放在该机默认目录下；不填用默认）">
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px"><h2>任务 <span class="n" id="tcount"></span>
+        <span class="tbar"><button id="tPickAll">全选</button><button id="tPickDone" title="勾上已经跑完、没成、已停的那些，方便一次删掉">选中已结束</button><button id="tPickNone">清除</button><button id="tDel" class="danger" disabled>删除选中</button></span></h2>
+        <p class="muted" style="margin:0 0 8px">双击一条任务，直接弹出它各台的执行结果。</p><div id="tlist"></div></div>
+      <div id="detail"></div>
+    </section>
+  </main>
+  <main id="viewPrompts" style="display:none">
+    <section>
+      <div class="card">
+        <h2>提示词 <span class="n" id="pcount"></span>
+          <span class="tbar">
+            <input type="text" id="pSearch" placeholder="搜内容、目录、专家…" style="width:220px">
+            <button id="pReload">刷新</button>
+            <button id="pDel" class="danger" disabled>删除选中</button>
+          </span></h2>
+        <p class="muted">每次发出去的提示词都记在这儿（勾了「每行算一件活」的，一行记一条）。点「拿去用」把文字填回发任务框，改两笔就能再发。</p>
+        <div id="plist"></div>
+      </div>
+    </section>
+  </main>`;
+  $('#sendBtn').onclick = sendTask;
+  // 会话：默认新会话；选了一条旧会话就接着它的上下文做
+  $('#sessPick').onclick = openSessModal;
+  $('#sessClear').onclick = () => { sessPicked = null; renderSessBar(); };
+  $('#sessClose').onclick = () => { $('#sessModal').style.display = 'none'; };
+  $('#sessSearch').oninput = () => renderSessList();
+  $('#sessModal').onclick = (e) => { if (e.target.id === 'sessModal') $('#sessModal').style.display = 'none'; };
+  // 双击任务看结果：点遮罩或按 Esc 关掉
+  $('#resModal').onclick = (e) => { if (e.target.id === 'resModal') closeResult(); };
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#resModal') && $('#resModal').style.display === 'flex') closeResult(); });
+  $('#chain').onchange = () => { if ($('#chain').checked) $('#split').checked = true; };
+  $('#split').onchange = () => { if (!$('#split').checked) $('#chain').checked = false; };
+  document.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => { MODE = r.value; localStorage.setItem('fleetMode', MODE); renderTarget(); });
+  $('#prompt').onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendTask(); };
+  $('#pickAll').onclick = () => { picked = new Set(state.machines.filter(m => m.online).map(m => m.name)); savePick(); renderMachines(); };
+  $('#pickNone').onclick = () => { picked.clear(); savePick(); renderMachines(); };
+  // 任务多选删除
+  $('#tPickAll').onclick = () => { taskPicked = new Set(state.tasks.map(t => t.id)); paintTaskPick(); };
+  $('#tPickDone').onclick = () => { taskPicked = new Set(state.tasks.filter(taskEnded).map(t => t.id)); paintTaskPick(); };
+  $('#tPickNone').onclick = () => { taskPicked.clear(); paintTaskPick(); };
+  $('#tDel').onclick = () => delTasks([...taskPicked]);
+  // 页面切换：任务 / 提示词
+  document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => setView(b.dataset.view));
+  $('#pReload').onclick = () => loadPrompts();
+  $('#pDel').onclick = () => delPrompts([...promptPicked]);
+  $('#pSearch').oninput = (e) => { promptQ = e.target.value.trim(); renderPrompts(); };
+  $('#addBtn').onclick = () => { const c = $('#joinCard'); c.style.display = c.style.display === 'none' ? '' : 'none'; renderJoin(); };
+  $('#logoutBtn').onclick = async () => {
+    if (!confirm('退出登录？下次要重新输口令。')) return;
+    try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
+    KEY = ''; localStorage.removeItem('fleetKey');
+    renderLogin('已退出');
+  };
+  // 顶部黄条的「去改」：展开加电脑面板并滚到改口令那一节
+  $('#secGo').onclick = (e) => {
+    e.preventDefault();
+    $('#joinCard').style.display = '';
+    renderJoin();
+    setTimeout(() => { try { const el = $('#chPass'); if (el) el.scrollIntoView({ block: 'center' }); } catch {} }, 300);
+  };
+  // 一键升级：给还没到最新版的在线电脑发升级指令（不用去那台电脑上敲命令）
+  $('#upBtn').onclick = async () => {
+    const latest = (state.meta && state.meta.agentLatest) || '最新版';
+    const stale = state.machines.filter(m => m.online && m.agentsOk === false);
+    if (!stale.length) { alert(`在线的电脑都已经是 ${latest} 了，不用升级。`); return; }
+    if (!confirm(`要给这些电脑发升级指令吗？\n\n${stale.map(m => m.name + '（' + (m.agentVersion || '旧版') + '）').join('\n')}\n\n升级会重启它们的连接程序，各有 5~10 秒显示离线，随后自动回来。`)) return;
+    const btn = $('#upBtn'); btn.disabled = true; btn.textContent = '下发中…';
+    try {
+      const r = await api('/api/upgrade', { method: 'POST', body: JSON.stringify({ targets: stale.map(m => m.name) }) });
+      btn.textContent = `已下发 ${r.targets.length} 台`;
+      setTimeout(() => { btn.textContent = '升级连接程序'; btn.disabled = false; }, 2500);
+      await refresh();
+      alert(`已给 ${r.targets.length} 台电脑发了升级指令，约 1 分钟内陆续升到 ${latest}。\n升级时它们会短暂离线，属正常。`);
+    } catch (err) { alert('没发出去：' + err.message); btn.textContent = '升级连接程序'; btn.disabled = false; }
+  };
+}
+const savePick = () => localStorage.setItem('fleetPicked', JSON.stringify([...picked]));
+const EXPERT_KEY = 'fleetExpert', MODEL_KEY = 'fleetModel';
+// 总控取不到清单时的兜底：至少能选「高级开发工程师」和 DeepSeek V4.1 Flash
+const FALLBACK_EXPERTS = [
+  { id: 'senior-developer', name: '高级开发工程师' },
+  { id: 'data-engineer', name: '数据工程师' },
+  { id: 'modern-webapp', name: '现代 Web 应用' },
+  { id: 'qa-testing', name: '测试工程师' },
+];
+const FALLBACK_MODELS = [
+  { id: '', name: '默认（用那台电脑自己的设置）' },
+  { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash（快）' },
+  { id: 'deep-model', name: 'Deep（通用深思考）' },
+  { id: 'balanced-model', name: 'Balanced（均衡）' },
+  { id: 'fast-model', name: 'Fast（最快）' },
+];
+const DEF_EXPERT = 'senior-developer', DEF_MODEL = 'deepseek-v4.1-flash';
+let metaSig = '';
+// 专家 / 模型下拉：优先用总控给的清单；取不到就用内置兜底。选了记在本机，刷新不丢
+function renderPickers() {
+  const ex = $('#expert'), mo = $('#model');
+  if (!ex || !mo) return;
+  const meta = state.meta || {};
+  const experts = (meta.experts && meta.experts.length) ? meta.experts : FALLBACK_EXPERTS;
+  const models = (meta.models && meta.models.length) ? meta.models : FALLBACK_MODELS;
+  const sig = JSON.stringify([experts.map(e => e.id), models.map(m => m.id)]);
+  if (sig !== metaSig || !ex.options.length) {
+    metaSig = sig;
+    const savedE = localStorage.getItem(EXPERT_KEY), savedM = localStorage.getItem(MODEL_KEY);
+    // 没手动选过 → 默认「高级开发工程师」+「DeepSeek V4.1 Flash」
+    const curE = savedE === null ? (meta.defaultExpert || DEF_EXPERT) : savedE;
+    const curM = savedM === null ? (meta.defaultModel || DEF_MODEL) : savedM;
+    ex.innerHTML = '<option value="">不指定（用那台电脑的默认专家）</option>' +
+      experts.map(e => `<option value="${esc(e.id)}">${esc(e.name)}（${esc(e.id)}）</option>`).join('');
+    ex.value = [...ex.options].some(o => o.value === curE) ? curE : '';
+    mo.innerHTML = models.map(m => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('');
+    mo.value = [...mo.options].some(o => o.value === curM) ? curM : '';
+    ex.onchange = () => { localStorage.setItem(EXPERT_KEY, ex.value); renderPickerHint(); };
+    mo.onchange = () => { localStorage.setItem(MODEL_KEY, mo.value); renderPickerHint(); };
+  }
+  renderPickerHint();
+}
+function expertName(id) {
+  const list = (state.meta && state.meta.experts && state.meta.experts.length) ? state.meta.experts : FALLBACK_EXPERTS;
+  const hit = list.find(e => e.id === id);
+  return hit ? hit.name : id;
+}
+function renderPickerHint() {
+  const hint = $('#expertHint'); if (!hint) return;
+  const e = $('#expert').value, m = $('#model').value;
+  if (!e && !m) { hint.textContent = ''; return; }
+  const min = (state.meta && state.meta.agentMin) || '1.7.0';
+  const on = state.machines.filter(x => x.online);
+  const nativeOn = on.filter(x => x.agentsOk && (!e || (x.experts || []).some(y => y.id === e)));
+  let s = '';
+  if (on.length && !nativeOn.length) {
+    s = e
+      ? `这些电脑还到不了原生加载（连接程序低于 ${min} 或没装该专家）：会把「${expertName(e)}」的身份写进任务说明顶上，照常能跑。升级连接程序后自动变原生。`
+      : `这些电脑连接程序低于 ${min}，模型指定这次不生效（用本机默认）。跑一次更新命令即可。`;
+  }
+  hint.textContent = s;
+  hint.style.color = s ? 'var(--amber)' : '';
+}
+
+let joinKey = ''; // 机器口令：拼「加电脑」命令用，登录后单独取一次
+function renderJoin() {
+  const hub = state.hub || location.origin;
+  const card = $('#joinCard');
+  if (!joinKey) {
+    card.innerHTML = '<h2>加一台电脑</h2><p class="muted">读取口令中…</p>';
+    api('/api/key').then(r => { joinKey = r.key || ''; renderJoin(); })
+      .catch(() => { card.innerHTML = '<h2>加一台电脑</h2><p class="muted" style="color:var(--red)">没取到机器口令，刷新页面试试</p>'; });
+    return;
+  }
+  const k = encodeURIComponent(joinKey);
+  card.innerHTML = `<h2>加一台电脑</h2>
+    <p class="muted">在那台电脑上打开终端，粘贴一行回车。装好后它自己连上来，开机自动连。电脑在哪个网络都行。</p>
+    <b>Mac</b><code class="cmd">curl -fsSL "${esc(hub)}/join.sh?t=${esc(k)}" | bash</code>
+    <b>Windows（PowerShell）</b><code class="cmd">irm "${esc(hub)}/join.ps1?t=${esc(k)}" | iex</code>
+    <p class="muted">想给它起名字：Mac 在末尾加 <code>-s -- 名字</code>；Windows 先运行 <code>$env:FLEET_NAME="名字"</code> 再粘贴。<br>
+    每台要先装好 WorkBuddy 并登录；第一次会顺带装好它的命令行版，提示登录就用同一个账号登一次。</p>
+    <h2 style="margin-top:14px">更新已有电脑的连接程序</h2>
+    <p class="muted">指定专家/模型要用新版连接程序（${esc((state.meta && state.meta.agentMin) || '1.7.0')} 及以上）。已接入的电脑跑下面这行，只换连接程序，不用重装任何东西，约 5 秒。</p>
+    <b>Windows（PowerShell）</b><code class="cmd">irm "${esc(hub)}/update.ps1?t=${esc(k)}" | iex</code>
+    <b>Mac / Linux</b><code class="cmd">curl -fsSL "${esc(hub)}/update.sh?t=${esc(k)}" | bash</code>
+    <h2 style="margin-top:14px">装终端（在别的电脑上用命令派活、看状态和结果）</h2>
+    <b>Mac / Linux</b><code class="cmd">curl -fsSL "${esc(hub)}/term.sh?t=${esc(k)}" | bash</code>
+    <b>Windows（PowerShell）</b><code class="cmd">irm "${esc(hub)}/term.ps1?t=${esc(k)}" | iex</code>
+    <p class="muted">装好后：<code>wb</code> 看各台状态；<code>wb 派 "要干什么"</code> 派活并等结果；<code>wb 看 任务号</code>；<code>wb 停 任务号</code>。</p>
+    <h2 style="margin-top:14px">安全：网页登录口令</h2>
+    <p class="muted">别人要打开这个网页，得先输这个口令（存在总控那台机器的 <code>data/pass.txt</code>）。改完立刻生效，别处已登录的浏览器会被踢下线。<b>连接程序用的是上面那串机器口令，不受影响，不用重装。</b>口令外泄过就改一个。</p>
+    <div class="row"><input type="text" id="oldPass" placeholder="现在的口令" autocomplete="off" style="width:200px"><input type="text" id="newPass" placeholder="新口令（至少 6 位）" autocomplete="new-password" style="width:200px"><button id="chPass">改口令</button></div>
+    <p class="muted" id="passMsg"></p>`;
+  $('#chPass').onclick = async () => {
+    const oldp = $('#oldPass').value.trim(), np = $('#newPass').value.trim();
+    if (np.length < 6) { $('#passMsg').textContent = '新口令至少 6 位'; $('#passMsg').style.color = 'var(--red)'; return; }
+    try {
+      await api('/api/pass', { method: 'POST', body: JSON.stringify({ old: oldp, pass: np }) });
+      $('#oldPass').value = ''; $('#newPass').value = '';
+      $('#passMsg').textContent = '改好了。这台浏览器还登着，别处下次要重新输口令。';
+      $('#passMsg').style.color = 'var(--green)';
+    } catch (e) {
+      $('#passMsg').textContent = '没改成：' + e.message;
+      $('#passMsg').style.color = 'var(--red)';
+    }
+  };
+}
+
+// 这台填的目录，在它上报的「本机真实存在目录」里找不到 → 多半是个空壳目录，任务在上面等于白干
+// 比较时统一斜杠方向、去掉末尾斜杠，免得 E:/x 和 E:\x 被判成两个地方
+const normDir = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+function dirWarn(m) {
+  const d = m.dir || m.workdir || '';
+  if (!d || !(m.dirs || []).length) return '';
+  const hit = m.dirs.find(x => normDir(x.p) === normDir(d));
+  if (!hit) return '这个目录在这台机器上没找到，点「改」从本机真实目录里选一个';
+  if (!hit.proj) return '这个目录在这台机器上确实存在，但里面没有项目文件（多半是空壳），点「改」换一个';
+  return '';
+}
+function renderMachines() {
+  const ms = state.machines;
+  $('#mcount').textContent = `${ms.filter(m => m.online).length} 台在线 / 共 ${ms.length} 台`;
+  $('#mlist').innerHTML = ms.length ? ms.map(m => {
+    const cls = !m.online ? '' : m.idle ? 'on' : 'busy';
+    const cpu = m.cpu != null ? ` · CPU ${m.cpu}%` : '';
+    const st = !m.online ? '离线（' + fmtT(m.lastSeen) + '）' : (m.busy ? '在干活' : m.idle ? '空闲' : m.cpu >= 85 ? '电脑本身很忙，先不派' : '有活排着') + cpu;
+    const warn = (m.online && !m.cli ? '<div class="meta" style="color:var(--red)">没找到 WorkBuddy 命令行，重跑一次加入命令</div>' : '')
+      + (m.online && m.needsLogin ? '<div class="meta" style="color:var(--red)">命令行没登录：在这台电脑上打开一次 WorkBuddy（或运行 codebuddy 后输入 /login），登录好点右上角「升级连接程序」</div>'
+        : (m.online && m.agentsOk === false ? `<div class="meta" style="color:var(--amber)">连接程序 ${esc(m.agentVersion || '旧版')}：还不能指定专家/模型，点右上角「升级连接程序」</div>` : ''))
+      + (m.online && (m.experts || []).length ? `<div class="meta">专家 ${esc(m.experts.map(e => e.name).join('、'))}</div>` : '');
+    return `<label class="m"><input type="checkbox" data-n="${esc(m.name)}" ${picked.has(m.name) ? 'checked' : ''} ${m.online ? '' : 'disabled'}>
+      <div><div class="nm"><span class="dot ${cls}"></span>${esc(m.name)}</div>
+      <div class="meta">${st} · ${esc(m.os)}</div>
+      <div class="meta">目录 ${esc(m.dir || m.workdir || '(这台没上报)')}${m.dirCustom ? ' <span class="chip">已改</span>' : ''} <a href="#" data-dir="${esc(m.name)}" title="改这台电脑以后默认在哪个文件夹干活">改</a>${dirWarn(m) ? `<div class="meta" style="color:var(--amber)">${esc(dirWarn(m))}</div>` : ''}</div>${warn}
+      ${m.online ? '' : `<a href="#" class="meta" data-del="${esc(m.name)}">移除</a>`}</div></label>`;
+  }).join('') : '<div class="empty">还没有电脑连上来，点右上角「加电脑」。</div>';
+  $('#mlist').querySelectorAll('input[data-n]').forEach(cb => cb.onchange = () => { cb.checked ? picked.add(cb.dataset.n) : picked.delete(cb.dataset.n); savePick(); renderTarget(); });
+  // 改某台的默认干活目录：把这台机器上真实存在的目录列出来，直接输编号选
+  $('#mlist').querySelectorAll('a[data-dir]').forEach(a => a.onclick = async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const m = state.machines.find(x => x.name === a.dataset.dir); if (!m) return;
+    const cur = m.dir || m.workdir || '';
+    const ds = (m.dirs || []).slice().sort((x, y) => (Number(!!y.proj) - Number(!!x.proj)) || ((x.recent || 999) - (y.recent || 999)));
+    let msg = `「${m.name}」以后默认在哪个文件夹干活？\n\n`;
+    if (ds.length) {
+      msg += `这台电脑上真实存在的目录（输编号直接选）：\n`
+        + ds.map((d, i) => `  ${i + 1}. ${d.p}${d.proj ? '   ✓项目' : ''}${d.wb ? '   ←WorkBuddy 里打开过' : ''}`).join('\n') + '\n\n';
+      if (cur && !ds.some(d => normDir(d.p) === normDir(cur))) msg += `⚠ 现在填的 ${cur} 不在这份清单里，可能是个空文件夹。\n\n`;
+    } else {
+      msg += '（这台还没上报目录清单：连接程序升级到 1.8.0 后就能列出来，先手动填绝对路径）\n\n';
+    }
+    msg += '也可以直接输入绝对路径（如 D:\\code\\项目名）。\n留空并确定 = 恢复成连接程序上报的默认值。';
+    const v = prompt(msg, cur);
+    if (v === null) return;
+    const t = v.trim();
+    const n = /^\d+$/.test(t) ? parseInt(t, 10) : 0;
+    const finalDir = (n >= 1 && n <= ds.length) ? ds[n - 1].p : t;
+    try {
+      await api(`/api/machines/${encodeURIComponent(m.name)}/dir`, { method:'POST', body: JSON.stringify({ dir: finalDir }) });
+      await refresh();
+    } catch (err) { alert('没改成：' + err.message); }
+  });
+  $('#mlist').querySelectorAll('a[data-del]').forEach(a => a.onclick = async (e) => { e.preventDefault(); await api('/api/machines/' + encodeURIComponent(a.dataset.del), { method:'DELETE' }).catch(err => alert(err.message)); refresh(); });
+  renderTarget();
+}
+function targets() {
+  const on = state.machines.filter(m => m.online).map(m => m.name);
+  const sel = on.filter(n => picked.has(n));
+  return sel.length ? sel : on;
+}
+// 派给空闲的：只传勾了的（不勾 = 全部电脑都能接，离线的回来也能接）
+const poolPicked = () => state.machines.filter(m => picked.has(m.name)).map(m => m.name);
+function renderAfter() {
+  const bar = $('#afterBar');
+  if (!AFTER || MODE !== 'pool') { bar.style.display = 'none'; return; }
+  bar.style.display = '';
+  bar.innerHTML = `接在「${esc(AFTER.prompt.slice(0, 40))}」后面：它做完才开工，带上它的结果，优先交给做它的那台。 <a href="#" id="afterX">不接了</a>`;
+  $('#afterX').onclick = (e) => { e.preventDefault(); AFTER = null; renderAfter(); };
+}
+function renderTarget() {
+  $('#poolOpts').style.display = MODE === 'pool' ? '' : 'none';
+  renderAfter();
+  if (MODE === 'pool') {
+    const sel = poolPicked(), ms = sel.length ? state.machines.filter(m => sel.includes(m.name)) : state.machines;
+    const free = ms.filter(m => m.idle).length;
+    $('#target').textContent = !state.machines.length ? '还没有电脑连上来' : `${sel.length ? '从勾的 ' + sel.length + ' 台里' : '从全部 ' + ms.length + ' 台里'}挑空闲的，现在空闲 ${free} 台${free ? '' : '（先排着，谁先空谁接）'}`;
+    $('#sendBtn').disabled = !state.machines.length;
+    return;
+  }
+  const t = targets(); const all = state.machines.filter(m => m.online).length;
+  $('#target').textContent = t.length ? (t.length === all ? `全部 ${t.length} 台在线电脑各做一遍` : `${t.join('、')} 各做一遍`) : '没有在线的电脑';
+  $('#sendBtn').disabled = !t.length;
+}
+
+// 任务算「已结束」：有电脑做过且都收工了，或者压根没开跑就被停了
+function taskEnded(t) {
+  const rs = Object.values(t.runs);
+  if (!rs.length) return !!t.stopped;
+  return rs.every(r => ['done', 'failed', 'stopped'].includes(r.status));
+}
+// 只改勾选状态，不整块重绘，免得每 2.5 秒刷新时把勾打乱
+function paintTaskPick() {
+  const alive = new Set(state.tasks.map(t => t.id));
+  for (const id of [...taskPicked]) if (!alive.has(id)) taskPicked.delete(id);
+  document.querySelectorAll('#tlist .task').forEach(el => {
+    const on = taskPicked.has(el.dataset.id);
+    el.classList.toggle('pick', on);
+    const cb = el.querySelector('.tpick');
+    if (cb && cb.checked !== on) cb.checked = on;
+  });
+  const del = $('#tDel');
+  if (del) {
+    del.disabled = !taskPicked.size;
+    del.textContent = taskPicked.size ? `删除选中 ${taskPicked.size}` : '删除选中';
+  }
+}
+// 按钮点一下变「已复制」，1.5 秒后还原
+function flash(btn, text = '已复制') {
+  if (!btn) return;
+  if (!btn.dataset.old) btn.dataset.old = btn.textContent;
+  btn.textContent = text; btn.classList.add('ok');
+  setTimeout(() => { if (btn.isConnected) { btn.textContent = btn.dataset.old; btn.classList.remove('ok'); } }, 1500);
+}
+async function delTasks(ids) {
+  ids = [...new Set(ids)].filter(Boolean);
+  if (!ids.length) return;
+  const sel = state.tasks.filter(t => ids.includes(t.id));
+  const live = sel.filter(t => Object.values(t.runs).some(r => ['queued', 'sent', 'running'].includes(r.status)));
+  let msg = `确定删掉这 ${ids.length} 件任务吗？删掉后任务说明和执行结果都看不到了，恢复不了。`;
+  if (live.length) msg += `\n\n其中 ${live.length} 件还在跑，会先叫停再删。`;
+  if (!confirm(msg)) return;
+  try {
+    const r = await api('/api/tasks/delete', { method: 'POST', body: JSON.stringify({ ids }) });
+    for (const id of ids) taskPicked.delete(id);
+    if (selTask && ids.includes(selTask)) { selTask = null; detail = null; renderDetail(); }
+    if (resId && ids.includes(resId)) closeResult(); // 正在看结果的这件被删了，别留着空弹窗
+    await refresh();
+    if (r.stopped && r.stopped.length) alert(`删了 ${r.removed} 件。已叫停：${r.stopped.join('、')}（那台手上的活停了才会接新活，稍等一下）。`);
+  } catch (e) { alert('没删掉：' + e.message); }
+}
+
+// ---------- 提示词页 ----------
+function applyView() {
+  const a = $('#viewTasks'), b = $('#viewPrompts');
+  if (!a || !b) return;
+  a.style.display = VIEW === 'tasks' ? '' : 'none';
+  b.style.display = VIEW === 'prompts' ? '' : 'none';
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.view === VIEW));
+}
+function setView(v) {
+  VIEW = v === 'prompts' ? 'prompts' : 'tasks';
+  const want = VIEW === 'prompts' ? '#prompts' : '#tasks';
+  if (location.hash !== want) { try { history.replaceState(null, '', want); } catch { location.hash = want; } }
+  applyView();
+  if (VIEW === 'prompts') loadPrompts();
+}
+async function loadPrompts() {
+  if (!$('#plist')) return;
+  $('#plist').innerHTML = '<div class="empty">读取中…</div>';
+  try {
+    const r = await api('/api/prompts');
+    promptList = r.prompts || [];
+    promptTotal = r.total || promptList.length;
+    renderPrompts();
+  } catch (e) {
+    if (e.message !== '401') $('#plist').innerHTML = `<div class="empty">没拉到：${esc(e.message)}</div>`;
+  }
+}
+function promptMeta(x) {
+  const bits = [fmtT(x.at)];
+  bits.push(x.src ? '飞书表' : (x.mode === 'pool' ? '派给空闲的' : `${x.targets || 0} 台各做一遍`));
+  if (x.expert) bits.push('专家 ' + expertName(x.expert));
+  if (x.model) bits.push('模型 ' + x.model);
+  if (x.workdir) bits.push('目录 ' + x.workdir);
+  if (x.git) bits.push('Git 同步');
+  return bits.join(' · ');
+}
+function paintPromptPick() {
+  const alive = new Set(promptList.map(x => x.id));
+  for (const id of [...promptPicked]) if (!alive.has(id)) promptPicked.delete(id);
+  document.querySelectorAll('#plist .pm').forEach(el => {
+    const on = promptPicked.has(el.dataset.id);
+    el.classList.toggle('pick', on);
+    const cb = el.querySelector('.ppick');
+    if (cb && cb.checked !== on) cb.checked = on;
+  });
+  const b = $('#pDel');
+  if (b) { b.disabled = !promptPicked.size; b.textContent = promptPicked.size ? `删除选中 ${promptPicked.size}` : '删除选中'; }
+}
+function renderPrompts() {
+  const box = $('#plist');
+  if (!box) return;
+  const q = promptQ.toLowerCase();
+  const list = q ? promptList.filter(x => (x.text + ' ' + (x.workdir || '') + ' ' + (x.expert || '') + ' ' + (x.model || '')).toLowerCase().includes(q)) : promptList;
+  $('#pcount').textContent = promptTotal ? `共 ${promptTotal} 条${q ? `，匹配 ${list.length} 条` : ''}` : '';
+  if (!promptList.length) { box.innerHTML = '<div class="empty">还没记下提示词。回「任务」页发一条，就会出现在这里。</div>'; return; }
+  if (!list.length) { box.innerHTML = `<div class="empty">没有匹配「${esc(promptQ)}」的提示词。</div>`; return; }
+  box.innerHTML = list.map(x => {
+    const long = x.text.length > 220;
+    return `<div class="pm ${promptPicked.has(x.id) ? 'pick' : ''}" data-id="${x.id}">
+      <div class="pmh"><input type="checkbox" class="ppick" data-pp="${x.id}" title="勾上，批量删" ${promptPicked.has(x.id) ? 'checked' : ''}>
+        <span class="meta">${esc(promptMeta(x))}${x.len >= 4000 ? ' · 超长' : ''}</span>
+        <button class="mini" data-puse="${x.id}" title="把这条提示词填回发任务框">拿去用</button>
+        <button class="mini" data-pcopy="${x.id}">复制</button>
+        <button class="mini danger" data-pdel="${x.id}">删</button></div>
+      <div class="ptext ${long ? 'clamp' : ''}" data-pt="${x.id}">${esc(x.text)}</div>
+      ${long ? `<span class="more" data-pmore="${x.id}" data-len="${x.len || x.text.length}">展开（${x.len || x.text.length} 字）</span>` : ''}</div>`;
+  }).join('');
+  box.querySelectorAll('.ppick').forEach(cb => cb.onclick = (e) => {
+    e.stopPropagation();
+    cb.checked ? promptPicked.add(cb.dataset.pp) : promptPicked.delete(cb.dataset.pp);
+    paintPromptPick();
+  });
+  box.querySelectorAll('[data-pmore]').forEach(el => el.onclick = () => {
+    const t = box.querySelector(`.ptext[data-pt="${el.dataset.pmore}"]`);
+    if (!t) return;
+    const on = t.classList.toggle('clamp');
+    el.textContent = on ? `展开（${el.dataset.len} 字）` : '收起';
+  });
+  box.querySelectorAll('[data-puse]').forEach(b => b.onclick = () => {
+    const x = promptList.find(y => y.id === b.dataset.puse);
+    if (!x) return;
+    setView('tasks');
+    const ta = $('#prompt'); ta.value = x.text;
+    if ($('#workdir')) $('#workdir').value = x.workdir || '';
+    if ($('#expert') && [...$('#expert').options].some(o => o.value === (x.expert || ''))) $('#expert').value = x.expert || '';
+    if ($('#model') && [...$('#model').options].some(o => o.value === (x.model || ''))) $('#model').value = x.model || '';
+    renderPickerHint(); ta.focus(); window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+  box.querySelectorAll('[data-pcopy]').forEach(b => b.onclick = async () => {
+    const x = promptList.find(y => y.id === b.dataset.pcopy);
+    if (!x) return;
+    try {
+      const text = x.cut ? (await api(`/api/prompts/${x.id}`)).text : x.text;
+      await copyText(text);
+      flash(b);
+    } catch { alert('复制没成功，请手动选中文字复制'); }
+  });
+  box.querySelectorAll('[data-pdel]').forEach(b => b.onclick = () => delPrompts([b.dataset.pdel]));
+  paintPromptPick();
+}
+async function delPrompts(ids) {
+  ids = [...new Set(ids)].filter(Boolean);
+  if (!ids.length) return;
+  if (!confirm(`确定删掉这 ${ids.length} 条提示词记录吗？只删记录，已经在跑或做过的任务不受影响。`)) return;
+  try {
+    await api('/api/prompts/delete', { method: 'POST', body: JSON.stringify({ ids }) });
+    for (const id of ids) promptPicked.delete(id);
+    await loadPrompts();
+  } catch (e) { alert('没删掉：' + e.message); }
+}
+
+function renderTasks() {
+  $('#tcount').textContent = state.tasks.length ? `共 ${state.tasks.length} 件${state.tasks.length >= 50 ? '（只显示最近 50 件）' : ''}` : '';
+  $('#tlist').innerHTML = state.tasks.length ? state.tasks.map(t => {
+    const runs = Object.entries(t.runs);
+    const cnt = (s) => runs.filter(([, r]) => s.includes(r.status)).length;
+    const line = t.mode === 'pool'
+      ? `派给空闲的${t.pool.length ? '（限 ' + t.pool.map(esc).join('、') + '）' : ''}${t.after ? ' · 接力' : ''}`
+      : `${runs.length} 台各做一遍：完成 ${cnt(['done'])}，在干 ${cnt(['sent','running','queued'])}，没成 ${cnt(['failed','stopped'])}`;
+    const chips = t.waiting ? '<span class="chip wait">等上一步做完</span>' : t.pending ? '<span class="chip wait">等空闲电脑</span>' : t.stopped && !runs.length ? `<span class="chip s-stopped">${esc(t.note || '已停')}</span>`
+      : runs.map(([n, r]) => `<span class="chip s-${r.status}">${esc(n)} ${ST[r.status] || r.status}</span>`).join('');
+    return `<div class="task ${t.id === selTask ? 'sel' : ''}" data-id="${t.id}">
+      <div class="thead"><input type="checkbox" class="tpick" data-tp="${t.id}" title="勾上，批量删" ${taskPicked.has(t.id) ? 'checked' : ''}>
+      <div class="p">${t.mode === 'pool' ? '<span class="chip p' + t.prio + '">' + ['紧急','重要','加大力度发展'][t.prio] + '</span> ' : ''}${t.src ? '<span class="chip">飞书表</span> ' : ''}${t.expert ? `<span class="chip">专家 ${esc(expertName(t.expert))}</span> ` : ''}${t.model ? `<span class="chip">模型 ${esc(t.model)}</span> ` : ''}${esc(t.prompt)}</div>
+      <button class="mini" data-copy="${t.id}" title="复制这条任务的文字">复制</button><button class="mini danger" data-del="${t.id}" title="删掉这件任务">删</button></div>
+      <div class="muted">${fmtT(t.createdAt)}${t.session ? ' · 接会话 ' + esc(String(t.session).slice(0, 8)) : ''} · ${line}</div>
+      <div class="chips">${chips}</div></div>`;
+  }).join('') : '<div class="empty">还没发过任务。</div>';
+  $('#tlist').querySelectorAll('.task').forEach(el => el.onclick = () => { selTask = el.dataset.id; detail = null; renderTasks(); loadDetail(); });
+  // 双击：直接把这件任务各台的执行结果弹出来（点按钮/勾选框时不弹）
+  $('#tlist').querySelectorAll('.task').forEach(el => el.addEventListener('dblclick', (e) => {
+    if (e.target.closest('button, input')) return;
+    e.preventDefault();
+    try { window.getSelection().removeAllRanges(); } catch {}
+    openResult(el.dataset.id);
+  }));
+  $('#tlist').querySelectorAll('.tpick').forEach(cb => cb.onclick = (e) => {
+    e.stopPropagation();
+    cb.checked ? taskPicked.add(cb.dataset.tp) : taskPicked.delete(cb.dataset.tp);
+    paintTaskPick();
+  });
+  $('#tlist').querySelectorAll('[data-del]').forEach(btn => btn.onclick = (e) => { e.stopPropagation(); delTasks([btn.dataset.del]); });
+  $('#tlist').querySelectorAll('[data-copy]').forEach(btn => btn.onclick = async (e) => {
+    e.stopPropagation();
+    const id = btn.dataset.copy, t = state.tasks.find(x => x.id === id);
+    if (!t) return;
+    try {
+      // 列表里的是截断过的，复制要全文：正在看的那件就用手上的详情，否则单独取一次
+      const full = detail && detail.id === id ? detail.prompt : (await api(`/api/tasks/${id}`)).prompt;
+      await copyText(full);
+      flash(btn);
+    } catch { alert('复制没成功，请手动选中文字复制'); }
+  });
+  paintTaskPick();
+}
+
+async function loadDetail() {
+  if (!selTask) return;
+  const since = detail && detail.id === selTask ? detail.maxAt : 0;
+  const d = await api(`/api/tasks/${selTask}?since=${since}`);
+  if (detail && detail.id === d.id) {
+    for (const [n, r] of Object.entries(d.runs)) { const old = detail.runs[n]; r.items = (old ? old.items : []).concat(r.items); }
+  }
+  d.maxAt = Math.max(since, ...Object.values(d.runs).flatMap(r => r.items.map(i => i.at)));
+  detail = d; renderDetail();
+}
+// 一台的执行结果：最终回答 > 报错 > 过程里的文字
+function runResultText(r) {
+  if (!r) return '';
+  if (r.result && r.result.trim()) return r.result.trim();
+  if (r.error && r.error.trim()) return r.error.trim();
+  return (r.items || []).filter(i => i.t === 'text').map(i => i.s).filter(Boolean).join('\n').trim();
+}
+// 这件任务在各台上的结果合成一段：抬头写清楚是什么活，下面按电脑分段
+function allResultText(d) {
+  const head = [`任务：${d.prompt}`, `时间：${fmtT(d.createdAt)}`]
+    .concat(d.workdir ? [`目录：${d.workdir}`] : [])
+    .concat(d.expert ? [`专家：${expertName(d.expert)}`] : [])
+    .concat(d.model ? [`模型：${d.model}`] : []).join('\n');
+  const body = Object.entries(d.runs).map(([n, r]) => {
+    const st = (ST[r.status] || r.status) + (r.startedAt && r.endedAt ? ' · ' + dur(r.startedAt, r.endedAt) : '');
+    const txt = runResultText(r) || (['queued', 'sent', 'running'].includes(r.status) ? '（还在干）' : '（没有输出）');
+    return `──── ${n} · ${st} ────\n${txt}`;
+  }).join('\n\n');
+  return head + '\n\n' + (body || '（还没有电脑接手）');
+}
+// ---------- 双击任务：弹出各台的执行结果 ----------
+let resId = '', resDetail = null, resTimer = null;
+
+async function openResult(id) {
+  resId = id; resDetail = null;
+  const m = $('#resModal');
+  if (!m) return;
+  m.style.display = 'flex';
+  $('#resBox').innerHTML = '<div class="empty">正在读结果…</div>';
+  await pullResult();
+}
+
+async function pullResult() {
+  const id = resId;
+  if (!id) return;
+  let d = null;
+  try { d = await api(`/api/tasks/${id}`); }
+  catch (e) {
+    if (id === resId && $('#resBox')) $('#resBox').innerHTML = `<div class="empty">读不到结果：${esc(e.message)}</div>`;
+    return;
+  }
+  if (id !== resId) return; // 这期间又双击了别的任务
+  resDetail = d; paintResult();
+}
+
+function closeResult() {
+  resId = ''; resDetail = null;
+  if (resTimer) { clearTimeout(resTimer); resTimer = null; }
+  const m = $('#resModal');
+  if (m) m.style.display = 'none';
+}
+
+function paintResult() {
+  const d = resDetail; if (!d) return;
+  const box = $('#resBox'); if (!box) return;
+  const keep = box.scrollTop; // 在跑的任务会自动刷新，别把人看的进度甩回顶上
+  const runs = Object.entries(d.runs);
+  const busy = ['queued', 'sent', 'running'];
+  const live = !!(d.pending || d.waiting || runs.some(([, r]) => busy.includes(r.status)));
+  const meta = [fmtT(d.createdAt)]
+    .concat(d.workdir ? ['目录 ' + esc(d.workdir)] : [])
+    .concat(d.expert ? ['专家 ' + esc(expertName(d.expert))] : [])
+    .concat(d.model ? ['模型 ' + esc(d.model)] : [])
+    .concat(d.session ? ['接会话 ' + esc(String(d.session).slice(0, 8))] : [])
+    .join(' · ');
+  const blocks = runs.length ? runs.map(([n, r]) => {
+    const txt = runResultText(r) || (busy.includes(r.status) ? '（还在干，等它出结果）' : '（没有输出）');
+    return `<div style="border-top:1px solid var(--line); padding-top:10px; margin-top:12px">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px">
+        <b>${esc(n)}</b><span class="s-${r.status}">${ST[r.status] || r.status}</span>
+        <span class="muted">${dur(r.startedAt, r.endedAt)}</span>
+        ${r.dir ? `<span class="muted">${esc(r.dir)}</span>` : ''}
+        ${r.via === 'client' ? '<span class="chip">客户端跑的</span>' : r.via === 'cli' ? '<span class="chip">命令行跑的</span>' : ''}
+        <button class="mini" data-rcopy="${esc(n)}" style="margin-left:auto">复制这台</button>
+      </div>
+      <div style="white-space:pre-wrap; font-size:13px; line-height:1.65; ${r.status === 'failed' ? 'color:var(--red)' : ''}">${esc(txt)}</div>
+    </div>`;
+  }).join('') : '<div class="empty" style="margin-top:10px">还没有电脑接手。</div>';
+  box.innerHTML = `<h2 style="margin-top:0">执行结果 <span class="n">${meta}${live ? ' · <span style="color:var(--amber)">还在干</span>' : ''}</span>
+      <button id="resClose" style="margin-left:auto">关</button></h2>
+    <div style="white-space:pre-wrap; background:#fafbfc; border:1px solid var(--line); border-radius:8px; padding:10px; font-size:13px; line-height:1.6; max-height:120px; overflow:auto">${esc(d.prompt)}</div>
+    ${blocks}
+    <div class="row" style="margin-top:16px"><button id="resCopyAll" title="各台结果合成一段文字复制走">复制全部结果</button>
+      <span class="muted" style="font-size:12px">Esc 或点外面关掉${live ? '；在跑会自动刷新' : ''}</span></div>`;
+  box.scrollTop = keep;
+  $('#resClose').onclick = closeResult;
+  $('#resCopyAll').onclick = async () => {
+    try { await copyText(allResultText(d)); flash($('#resCopyAll')); } catch { alert('复制没成功，请手动选中文字复制'); }
+  };
+  box.querySelectorAll('[data-rcopy]').forEach(b => b.onclick = async () => {
+    const r = d.runs[b.dataset.rcopy]; if (!r) return;
+    try { await copyText(runResultText(r) || '（没有输出）'); flash(b); } catch { alert('复制没成功，请手动选中文字复制'); }
+  });
+  if (resTimer) { clearTimeout(resTimer); resTimer = null; }
+  if (live) resTimer = setTimeout(() => { resTimer = null; pullResult(); }, 2000);
+}
+
+function renderDetail() {
+  const d = detail; if (!d) { $('#detail').innerHTML = ''; return; }
+  const live = d.pending || d.waiting || Object.values(d.runs).some(r => ['queued','sent','running'].includes(r.status));
+  const scroll = {}; document.querySelectorAll('.run .body').forEach(b => scroll[b.dataset.n] = b.scrollHeight - b.scrollTop - b.clientHeight < 30);
+  $('#detail').innerHTML = `<div class="card" style="margin-top:16px">
+    <h2>任务详情 <span class="n">${fmtT(d.createdAt)}${d.workdir ? ' · 目录 ' + esc(d.workdir) : ''}${d.expert ? ' · 专家 ' + esc(expertName(d.expert)) : ''}${d.model ? ' · 模型 ' + esc(d.model) : ''}${d.cont ? ' · 接着上一轮' : ''}${d.session ? ' · 接会话 ' + esc(d.session.slice(0, 8)) : ''}</span>
+      ${live ? '<button id="stopAll" style="margin-left:auto">全部停下</button>' : ''}<button id="again" ${live ? '' : 'style="margin-left:auto"'}>再发一次</button><button id="next">接着这件做</button><button id="copyAll" title="把这件任务在各台上的结果合成一段文字复制走">复制全部结果</button></h2>
+    ${d.after ? `<p class="muted">接在「${esc(d.afterPrompt)}」后面</p>` : ''}
+    <div style="white-space:pre-wrap">${esc(d.prompt)}</div>
+    ${d.pending ? '<p class="muted" style="color:var(--amber)">能接的电脑现在都在忙，先排着，谁先空下来谁接。</p>' : ''}
+    ${d.waiting ? '<p class="muted" style="color:var(--amber)">等上一步做完再开工，会带上它的结果，优先交给做上一步的那台（文件就在那台，不用同步）。</p>' : ''}
+    ${d.note ? `<p class="muted">${esc(d.note)}</p>` : ''}
+    <div class="grid">${Object.entries(d.runs).map(([n, r]) => `<div class="run">
+      <div class="hd"><b>${esc(n)}</b><span class="s-${r.status}">${ST[r.status] || r.status}</span><span class="muted">${dur(r.startedAt, r.endedAt)}</span>
+        <button class="mini" data-cres="${esc(n)}" title="复制这台的执行结果">复制结果</button>
+        ${r.session ? `<button class="mini" data-csess="${esc(n)}" title="接着这条会话再发一条：带上这轮的全部上下文，只派给这台">接着这条会话</button>` : ''}
+        ${['queued','sent','running'].includes(r.status) ? `<button data-stop="${esc(n)}">停</button>` : ''}</div>
+      ${r.session ? `<div class="muted" style="margin:0 0 4px">会话 ${esc(r.session)} <button class="mini" data-csessid="${esc(r.session)}">复制</button>${r.via ? ' · ' + (r.via === 'client' ? '客户端执行' : '命令行执行') : ''}</div>` : ''}
+      ${r.dir ? `<div class="muted" style="margin:0 0 4px">实际目录 ${esc(r.dir)}</div>` : ''}
+      ${r.expertNote ? `<div class="muted" style="margin:0 0 4px;color:var(--amber)">${esc(r.expertNote)}</div>` : ''}
+      ${r.modelNote ? `<div class="muted" style="margin:0 0 4px;color:var(--amber)">${esc(r.modelNote)}</div>` : ''}
+      <div class="body" data-n="${esc(n)}">${r.items.map(i => `<div class="it ${i.t}">${esc(i.s)}</div>`).join('') || (r.status === 'queued' ? '<div class="it info">' + (d.mode === 'pool' ? '派给这台了，马上开始…' : '等这台手上的活干完再开始…') + '</div>' : '')}
+        ${r.result ? `<div class="result">${esc(r.result)}</div>` : ''}${r.error ? `<div class="result bad">${esc(r.error)}</div>` : ''}</div></div>`).join('')}</div></div>`;
+  document.querySelectorAll('.run .body').forEach(b => { if (scroll[b.dataset.n] !== false) b.scrollTop = b.scrollHeight; });
+  const stopAll = $('#stopAll'); if (stopAll) stopAll.onclick = () => api(`/api/tasks/${d.id}/stop`, { method:'POST', body:'{}' }).then(loadDetail);
+  document.querySelectorAll('[data-stop]').forEach(b => b.onclick = () => api(`/api/tasks/${d.id}/stop`, { method:'POST', body: JSON.stringify({ name: b.dataset.stop }) }).then(loadDetail));
+  // 复制：每台的执行结果各一个按钮，再加一个「全部结果」合成一段
+  document.querySelectorAll('[data-cres]').forEach(b => b.onclick = async (e) => {
+    e.stopPropagation();
+    const txt = runResultText(d.runs[b.dataset.cres]);
+    if (!txt) { alert('这台还没有执行结果' + (['queued','sent','running'].includes((d.runs[b.dataset.cres] || {}).status) ? '，还在干' : '')); return; }
+    try { await copyText(txt); flash(b); } catch { alert('复制没成功，请手动选中文字复制'); }
+  });
+  // 会话：接着这条会话再发一条（机器和目录跟着会话锁定）
+  document.querySelectorAll('[data-csess]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
+    const r = d.runs[b.dataset.csess]; if (!r || !r.session) return;
+    sessPicked = { session: r.session, machine: b.dataset.csess, dir: r.dir || '', prompt: d.prompt, at: r.endedAt || r.startedAt || d.createdAt, via: r.via || '' };
+    renderSessBar();
+    $('#prompt').focus();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+  document.querySelectorAll('[data-csessid]').forEach(b => b.onclick = async (e) => {
+    e.stopPropagation();
+    try { await copyText(b.dataset.csessid); flash(b); } catch { alert('复制没成功，请手动选中文字复制'); }
+  });
+  const copyAll = $('#copyAll'); if (copyAll) copyAll.onclick = async () => {
+    try { await copyText(allResultText(d)); flash(copyAll, '已复制全部'); } catch { alert('复制没成功，请手动选中文字复制'); }
+  };
+  $('#next').onclick = () => {
+    if (MODE !== 'pool') { MODE = 'pool'; localStorage.setItem('fleetMode', MODE); document.querySelector('input[value=pool]').checked = true; }
+    AFTER = { id: d.id, prompt: d.prompt }; renderTarget(); $('#prompt').focus(); window.scrollTo({ top:0, behavior:'smooth' });
+  };
+  $('#again').onclick = () => {
+    $('#prompt').value = d.prompt; $('#workdir').value = d.workdir || '';
+    // 原来接着某条会话的，再发一次仍接那条会话（机器、目录跟着锁）
+    sessPicked = d.session ? { session: d.session, machine: d.sessionMachine || Object.keys(d.runs)[0] || '', dir: d.workdir || '', prompt: d.prompt, at: d.createdAt, via: '' } : null;
+    renderSessBar();
+    if ($('#expert') && [...$('#expert').options].some(o => o.value === (d.expert || ''))) $('#expert').value = d.expert || '';
+    if ($('#model') && [...$('#model').options].some(o => o.value === (d.model || ''))) $('#model').value = d.model || '';
+    renderPickerHint(); $('#prompt').focus(); window.scrollTo({ top:0, behavior:'smooth' });
+  };
+}
+
+// ---------- 会话：接着哪条旧会话做 ----------
+function sessLabel(s) {
+  return `${s.machine} · ${s.session.slice(0, 8)}…`;
+}
+function renderSessBar() {
+  const chip = $('#sessChip'), hint = $('#sessHint'), clr = $('#sessClear'), wd = $('#workdir'), pick = $('#sessPick');
+  if (!chip) return;
+  if (sessPicked) {
+    chip.textContent = sessLabel(sessPicked);
+    chip.className = 'chip s-running';
+    clr.style.display = '';
+    pick.textContent = '换一条';
+    hint.textContent = sessPicked.via === 'client'
+      ? `接着这条会话做：只派给 ${sessPicked.machine}，目录锁在 ${sessPicked.dir || '该机默认目录'}。注意：这是客户端跑的会话，命令行读不到它的上下文，会用它上一轮的结论开一条新会话`
+      : `接着这条会话做：只派给 ${sessPicked.machine}，目录锁在 ${sessPicked.dir || '该机默认目录'}（走命令行真续接，客户端「自动化」里不会有这条）`;
+    if (wd) { wd.value = sessPicked.dir || ''; wd.disabled = true; }
+  } else {
+    chip.textContent = '新会话';
+    chip.className = 'chip';
+    clr.style.display = 'none';
+    pick.textContent = '选一条旧会话';
+    hint.textContent = '';
+    if (wd) wd.disabled = false;
+  }
+}
+async function openSessModal() {
+  $('#sessModal').style.display = 'flex';
+  $('#sessSearch').value = '';
+  $('#sessList').innerHTML = '<div class="empty">正在读会话…</div>';
+  sessAll = null; // 每次打开都重新拉，刚跑完的会话能立刻出现在列表里
+  renderSessList();
+}
+let sessAll = null;
+async function renderSessList() {
+  const box = $('#sessList');
+  if (!sessAll) {
+    try { sessAll = (await api('/api/sessions')).sessions || []; }
+    catch (e) { box.innerHTML = `<div class="empty">读不到会话：${esc(e.message)}</div>`; return; }
+  }
+  const q = $('#sessSearch').value.trim().toLowerCase();
+  const list = q ? sessAll.filter((s) => (s.session + ' ' + s.prompt + ' ' + s.dir + ' ' + s.machine).toLowerCase().includes(q)) : sessAll;
+  if (!list.length) {
+    box.innerHTML = `<div class="empty">${sessAll.length ? '没有匹配的会话。' : '还没有可以接的会话：跑过至少一件活（并且连接程序在 1.10.0 以上）才会记下会话。'}</div>`;
+    return;
+  }
+  box.innerHTML = list.map((s, i) => `<div class="task" data-i="${i}" style="cursor:pointer">
+    <div class="thead"><div class="p"><span class="chip">${esc(s.machine)}</span> <span class="chip">${esc(s.session.slice(0, 8))}</span> ${s.via === 'client' ? '<span class="chip" title="命令行读不到客户端的会话库和登录态，接它会用上一轮结论开新会话">客户端跑的</span>' : s.via === 'cli' ? '<span class="chip" title="能真正续上上下文">命令行跑的</span>' : ''} ${esc(s.prompt) || '<span class="muted">（没有任务说明）</span>'}</div></div>
+    <div class="muted">${fmtT(s.at)}${s.dir ? ' · ' + esc(s.dir) : ''}${s.status ? ' · ' + (ST[s.status] || s.status) : ''}</div>
+  </div>`).join('');
+  box.querySelectorAll('[data-i]').forEach((el) => el.onclick = () => {
+    sessPicked = { ...list[+el.dataset.i] };
+    $('#sessModal').style.display = 'none';
+    renderSessBar();
+  });
+}
+async function sendTask() {
+  const prompt = $('#prompt').value.trim(); if (!prompt) return;
+  $('#sendBtn').disabled = true;
+  try {
+    const body = MODE === 'pool'
+      ? { mode:'pool', prio: +$('#prio').value, prompt, targets: poolPicked(), split: sessPicked ? false : $('#split').checked, chain: sessPicked ? false : $('#chain').checked, after: AFTER && AFTER.id, git: $('#git').checked, cont: $('#cont').checked, workdir: $('#workdir').value.trim(), expert: $('#expert').value, model: $('#model').value }
+      : { mode:'all', prompt, targets: sessPicked ? [sessPicked.machine] : targets(), git: $('#git').checked, cont: $('#cont').checked, workdir: $('#workdir').value.trim(), expert: $('#expert').value, model: $('#model').value };
+    if (sessPicked) { body.session = sessPicked.session; body.sessionMachine = sessPicked.machine; }
+    const t = await api('/api/tasks', { method:'POST', body: JSON.stringify(body) });
+    $('#prompt').value = ''; selTask = t.id; detail = null; AFTER = null; renderAfter();
+    await refresh(); await loadDetail();
+    if (t.warn) alert('已发出，降级执行：\n\n' + t.warn);
+  } catch (e) { if (e.message !== '401') alert('没发出去：' + e.message); }
+  finally { renderTarget(); }
+}
+
+async function refresh() {
+  state = await api('/api/state');
+  renderMachines(); renderTasks(); renderPickers();
+  const tip = $('#secTip');
+  if (tip) tip.style.display = state.passSameAsKey ? '' : 'none';
+  if (!$('#joinCard').innerHTML) renderJoin();
+  if (!state.machines.length) $('#joinCard').style.display = '';
+}
+
+async function boot() {
+  // 先看登录状态：靠口令临时通过的（老书签带来的），换成正式的登录凭证再往下走
+  let me = null;
+  try { me = await api('/api/me', { silent: true }); } catch (e) { if (e.message !== '401') return; }
+  if (!me || me.via === 'key') {
+    if (KEY) {
+      try {
+        const r = await fetch('/api/login', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pass: KEY }) });
+        if (!r.ok) { KEY = ''; localStorage.removeItem('fleetKey'); return renderLogin('之前存的口令失效了，请重新输入'); }
+      } catch { return renderLogin('连不上总控'); }
+    } else if (!me) return renderLogin();
+  }
+  KEY = ''; localStorage.removeItem('fleetKey'); // 有登录凭证就够了，别在浏览器里留着口令
+  shell();
+  renderSessBar();
+  VIEW = location.hash === '#prompts' ? 'prompts' : 'tasks';
+  applyView();
+  try { await refresh(); } catch { return; }
+  if (VIEW === 'prompts') loadPrompts();
+  setInterval(() => refresh().catch(() => {}), 2500);
+  setInterval(() => { if (selTask && (!detail || detail.pending || detail.waiting || Object.values(detail.runs).some(r => ['queued','sent','running'].includes(r.status)))) loadDetail().catch(() => {}); }, 1200);
+}
+boot();
+</script>
+</body>
+</html>

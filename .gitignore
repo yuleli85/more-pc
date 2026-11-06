@@ -1,0 +1,23 @@
+# 运行时数据与口令：绝不能进仓库
+# data/ 里有 key.txt（机器口令）、pass.txt（网页登录口令）、state.json（任务与提示词）、hub.log
+data/
+
+# 构建产物与安装包（几十上百 MB，不入库）
+dist/
+build/payload/
+build/node_modules/
+build/*.7z
+build/*.zip
+build/probe-*/
+
+# 依赖与临时文件
+node_modules/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# 历史备份与手工备份（.git.bak-* 里含旧提交，可能带口令）
+.git.bak-*/
+*.bak-*
+*.bak
