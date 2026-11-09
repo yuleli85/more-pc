@@ -6,88 +6,465 @@
 <meta name="robots" content="noindex">
 <title>WorkBuddy 总控</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --line:#e3e6eb; --text:#1f2329; --sub:#646a73; --blue:#3370ff; --green:#20a162; --red:#e34d59; --amber:#d48806; }
+  :root{
+    --primary:#2563eb; --primary-d:#1d4ed8; --primary-l:#60a5fa;
+    --primary-50:#eff6ff; --primary-100:#dbeafe; --primary-200:#bfdbfe;
+    --bg:#f3f7fb; --card:#fff;
+    --line:#e8eef7; --line2:#dbe5f3;
+    --text:#0f172a; --text2:#334155; --sub:#64748b; --muted:#94a3b8;
+    --green:#0e9f6e; --red:#ef4444; --amber:#d97706;
+    /* 兼容旧变量名 */
+    --blue:#2563eb;
+    --r-sm:8px; --r:10px; --r-lg:14px; --r-xl:18px;
+    --sh-sm:0 1px 2px rgba(15,23,42,.05);
+    --sh:0 4px 14px rgba(30,64,175,.07);
+    --sh-lg:0 20px 48px rgba(23,58,130,.16);
+    --side-w:216px;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--text); }
-  header { display:flex; align-items:center; gap:12px; padding:12px 20px; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
-  header h1 { font-size:17px; margin:0; }
-  header .sub { color:var(--sub); font-size:13px; }
-  header button { margin-left:auto; white-space:nowrap; }
+  html,body { height:100%; }
+  body { margin:0; font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--text2); -webkit-font-smoothing:antialiased; }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background:#cfd9e8; border-radius:8px; border:2px solid transparent; background-clip:content-box; }
+  ::-webkit-scrollbar-thumb:hover { background:#b4c4da; background-clip:content-box; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  a { color:var(--primary); text-decoration:none; }
+  a:hover { color:var(--primary-d); }
+
+  /* ---------- 壳：左侧导航 + 右侧内容 ---------- */
+  .app { display:flex; min-height:100vh; }
+  .side { width:var(--side-w); flex:none; background:#fff; border-right:1px solid var(--line);
+    position:sticky; top:0; height:100vh; display:flex; flex-direction:column; padding:18px 0 14px; }
+  .brand { display:flex; align-items:center; gap:10px; padding:0 18px 18px; }
+  .brand .logo { width:34px; height:34px; flex:none; border-radius:10px; display:grid; place-items:center; color:#fff;
+    background:linear-gradient(135deg,#3b82f6,#1d4ed8); box-shadow:0 6px 14px rgba(37,99,235,.32); }
+  .brand b { display:block; font-size:15px; color:var(--text); letter-spacing:.2px; line-height:1.3; }
+  .brand i { font-style:normal; font-size:11px; color:var(--muted); letter-spacing:2px; }
+  .tabs { display:flex; flex-direction:column; gap:2px; padding:0 10px; background:transparent; }
+  .tabs button { height:40px; width:100%; display:flex; align-items:center; gap:10px; padding:0 12px;
+    border:0; background:transparent; border-radius:var(--r-sm); color:var(--sub); font-size:14px; justify-content:flex-start; }
+  .tabs button:hover { background:#f5f8fd; color:var(--primary); }
+  .tabs button.on { background:var(--primary-50); color:var(--primary); font-weight:600; }
+  .tabs button svg { flex:none; opacity:.9; }
+  .side-foot { margin-top:auto; padding:12px 18px 0; border-top:1px solid var(--line); color:var(--muted); font-size:12px; line-height:1.7; }
+  .side-foot b { color:var(--sub); font-weight:600; }
+  .main { flex:1; min-width:0; display:flex; flex-direction:column; }
+
+  header { display:flex; align-items:center; gap:12px; padding:12px 24px; position:sticky; top:0; z-index:20;
+    background:rgba(255,255,255,.88); backdrop-filter:saturate(180%) blur(12px); -webkit-backdrop-filter:saturate(180%) blur(12px);
+    border-bottom:1px solid var(--line); }
+  .hleft { min-width:0; }
+  .crumb { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); line-height:1.4; }
+  .crumb b { color:var(--sub); font-weight:500; }
+  header h1 { font-size:19px; font-weight:650; margin:2px 0 0; color:var(--text); display:flex; align-items:center; gap:10px; }
+  header h1 .sub { font-size:12px; font-weight:400; color:var(--muted); }
   .hdr-right { margin-left:auto; display:flex; gap:8px; align-items:center; }
-  .hdr-right button { margin-left:0; }
+  .stat { display:inline-flex; align-items:center; gap:4px; height:28px; padding:0 10px; border-radius:999px; background:#f6f9fd;
+    border:1px solid var(--line); color:var(--sub); font-size:12px; }
+  .stat b { color:var(--text); font-weight:600; }
+  .stat .dot { margin-right:0; }
+  .avatar { width:32px; height:32px; border-radius:50%; display:grid; place-items:center; font-size:13px; font-weight:600;
+    color:var(--primary-d); background:linear-gradient(135deg,#eff6ff,#dbeafe); border:1px solid #cfe2fb; }
   #logoutBtn { color:var(--sub); }
-  .tip { background:#fffbe6; border-bottom:1px solid #ffe58f; color:#874d00; padding:8px 20px; font-size:13px; display:flex; gap:10px; align-items:center; }
-  .tip a { color:#874d00; }
-  @media (max-width: 600px) { header .sub { display:none; } }
-  main { display:grid; grid-template-columns: 300px 1fr; gap:16px; padding:16px 20px; max-width:1500px; margin:0 auto; }
+  .tip { background:#fffbeb; border-bottom:1px solid #fde68a; color:#92400e; padding:9px 24px; font-size:13px; display:flex; gap:10px; align-items:center; }
+  .tip a { color:#92400e; text-decoration:underline; }
+
+  main { display:grid; grid-template-columns:320px 1fr; gap:16px; padding:18px 24px 30px; max-width:1600px; width:100%; margin:0 auto; }
   main > section { min-width:0; }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
-  h2 { font-size:14px; margin:0 0 10px; display:flex; align-items:center; gap:8px; }
-  h2 .n { color:var(--sub); font-weight:normal; }
-  .m { display:flex; align-items:flex-start; gap:8px; padding:8px 6px; border-radius:8px; cursor:pointer; }
-  .m:hover { background:#f2f3f5; }
-  .m .nm { font-weight:600; }
-  .m .meta { color:var(--sub); font-size:12px; word-break:break-all; }
-  .dot { width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:4px; background:#c0c4cc; }
-  .dot.on { background:var(--green); } .dot.busy { background:var(--amber); }
-  textarea { width:100%; min-height:96px; resize:vertical; border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; }
-  input[type=text] { border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:inherit; width:260px; max-width:100%; }
-  button { border:1px solid var(--line); background:#fff; border-radius:6px; padding:6px 14px; font:inherit; cursor:pointer; }
-  button.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
-  button:disabled { opacity:.5; cursor:default; }
-  .row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:10px; }
+  #viewPrompts { grid-template-columns:1fr; }
+
+  /* ---------- 卡片 ---------- */
+  .card { background:var(--card); border:1px solid var(--line); border-radius:var(--r-lg); padding:16px 18px; box-shadow:var(--sh); }
+  h2 { font-size:15px; font-weight:600; color:var(--text); margin:0 0 12px; padding-bottom:12px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  h2 .n { color:var(--muted); font-weight:400; font-size:12px; }
+  h2 .n b { color:var(--sub); }
+
+  /* ---------- 机器列表 ---------- */
+  .m { display:flex; align-items:flex-start; gap:9px; padding:10px 11px; margin-bottom:8px; border-radius:var(--r); border:1px solid var(--line);
+    background:linear-gradient(180deg,#fcfdff,#fff); cursor:pointer; transition:background .16s,border-color .16s,box-shadow .16s; }
+  .m:hover { border-color:var(--primary-200); box-shadow:0 4px 12px rgba(37,99,235,.08); }
+  .m:last-child { margin-bottom:0; }
+  .m input[type=checkbox] { margin-top:4px; accent-color:var(--primary); }
+  .m .nm { font-weight:600; color:var(--text); display:flex; align-items:center; }
+  .m .meta { color:var(--sub); font-size:12px; word-break:break-word; line-height:1.65; }
+  .m .one { color:var(--sub); font-size:12px; line-height:1.65; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px; background:#cbd5e1; box-shadow:0 0 0 3px rgba(148,163,184,.12); }
+  .dot.on { background:var(--green); box-shadow:0 0 0 3px rgba(14,159,110,.15); }
+  .dot.busy { background:var(--amber); box-shadow:0 0 0 3px rgba(217,119,6,.15); }
+
+  /* ---------- 表单控件 ---------- */
+  textarea,input[type=text],input[type=password],select { font:inherit; color:var(--text); background:#fff;
+    border:1px solid var(--line2); border-radius:var(--r-sm); transition:border-color .16s,box-shadow .16s; }
+  textarea { width:100%; min-height:104px; padding:10px 12px; resize:vertical; line-height:1.7; }
+  input[type=text],input[type=password] { height:32px; padding:0 10px; width:260px; max-width:100%; }
+  select { height:32px; padding:0 30px 0 10px; min-width:110px; max-width:100%; cursor:pointer; appearance:none; -webkit-appearance:none;
+    background-image:url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 9px center; }
+  textarea:focus,input:focus,select:focus { outline:none; border-color:var(--primary-l); box-shadow:0 0 0 3px rgba(37,99,235,.13); }
+  textarea::placeholder,input::placeholder { color:#a8b3c4; }
+  input:disabled,textarea:disabled { background:#f8fafc; color:var(--muted); }
+  input[type=checkbox],input[type=radio] { accent-color:var(--primary); }
+
+  /* ---------- 按钮 ---------- */
+  button { font:inherit; height:32px; padding:0 14px; border-radius:var(--r-sm); border:1px solid var(--line2); background:#fff;
+    color:var(--text2); cursor:pointer; transition:all .16s ease; display:inline-flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; }
+  button:hover { color:var(--primary); border-color:var(--primary-200); background:#f8fbff; }
+  button:active { transform:translateY(.5px); }
+  button.primary { background:linear-gradient(180deg,#3b82f6,var(--primary)); border-color:var(--primary); color:#fff;
+    box-shadow:0 4px 12px rgba(37,99,235,.26); }
+  button.primary:hover { background:linear-gradient(180deg,#4b8ef8,#2460e0); border-color:var(--primary-d); color:#fff; }
+  button:disabled { opacity:.55; cursor:not-allowed; box-shadow:none; transform:none; }
+  button.danger:not(:disabled) { color:var(--red); border-color:#fecaca; background:#fff; }
+  button.danger:not(:disabled):hover { background:#fef2f2; border-color:#fca5a5; color:var(--red); }
+  .row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:12px; }
+  .vsep { width:1px; height:16px; background:var(--line2); margin:0 2px; }
+  h2 .tbar button.primary { height:30px; font-size:13px; padding:0 18px; }
   .muted { color:var(--sub); font-size:12px; }
-  .task { border-top:1px solid var(--line); padding:10px 4px; cursor:pointer; }
-  .task:first-child { border-top:0; }
-  .task.sel { background:#f0f5ff; border-radius:8px; }
-  .task.pick { background:#fff8f0; border-radius:8px; }
+
+  /* ---------- 任务列表 ---------- */
+  .task { border:1px solid transparent; border-radius:var(--r); padding:10px 12px; margin:4px 0; cursor:pointer; transition:background .16s,border-color .16s,box-shadow .16s; }
+  .task:hover { background:#f8fbff; border-color:var(--line); }
+  .task:first-child { margin-top:0; }
+  .task.sel { background:var(--primary-50); border-color:var(--primary-200); box-shadow:inset 3px 0 0 var(--primary); }
+  .task.pick { background:#fffaf3; border-color:#fed7aa; }
   .task .thead { display:flex; align-items:flex-start; gap:8px; }
   .task .tpick { flex:none; margin:5px 0 0; cursor:pointer; }
-  .task .p { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .mini { flex:none; font-size:12px; line-height:1.5; padding:1px 8px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--sub); cursor:pointer; }
-  .mini:hover { color:var(--blue); border-color:var(--blue); }
-  .mini.ok { color:var(--green); border-color:var(--green); }
-  .mini.danger:hover { color:var(--red); border-color:var(--red); }
-  .tbar { margin-left:auto; display:flex; gap:6px; align-items:center; }
-  .tbar button { font-size:12px; padding:3px 10px; }
-  .tbar button.danger:not(:disabled) { color:var(--red); border-color:#f0c2c6; }
-  .tabs { display:flex; gap:4px; background:#f2f3f5; border-radius:8px; padding:3px; }
-  .tabs button { margin-left:0; border:0; background:transparent; padding:4px 14px; border-radius:6px; color:var(--sub); font-size:13px; }
-  .tabs button.on { background:#fff; color:var(--text); font-weight:600; box-shadow:0 1px 2px rgba(0,0,0,.06); }
-  #viewPrompts { grid-template-columns:1fr; }
-  .pm { border-top:1px solid var(--line); padding:10px 4px; }
-  .pm:first-of-type { border-top:0; }
-  .pm.pick { background:#fff8f0; border-radius:8px; }
+  .task .p { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); font-weight:500; }
+  .task .tmeta { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:6px; padding-left:22px; }
+  .task .tmeta .muted { line-height:1.6; }
+  .mini { flex:none; height:24px; font-size:12px; line-height:1; padding:0 9px; border:1px solid var(--line2); border-radius:6px; background:#fff; color:var(--sub); cursor:pointer; }
+  .mini:hover { color:var(--primary); border-color:var(--primary-200); background:var(--primary-50); }
+  .mini.ok { color:var(--green); border-color:#a7f3d0; background:#ecfdf5; }
+  .mini.danger:hover { color:var(--red); border-color:#fca5a5; background:#fef2f2; }
+  .tbar { margin-left:auto; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .tbar button { height:28px; font-size:12px; padding:0 10px; }
+  .tbar button.danger:not(:disabled) { color:var(--red); border-color:#fecaca; }
+
+  /* ---------- 提示词 ---------- */
+  .pm { border:1px solid transparent; border-radius:var(--r); padding:12px 12px 13px; margin:0; position:relative; transition:background .16s,border-color .16s; }
+  .pm + .pm::before { content:""; position:absolute; left:12px; right:12px; top:0; border-top:1px solid #eef3fa; pointer-events:none; }
+  .pm:hover { background:#f8fbff; border-color:var(--line); }
+  .pm:hover::before, .pm:hover + .pm::before { opacity:0; }
+  .pm:first-of-type { margin-top:0; }
+  .pm.pick { background:#fffaf3; border-color:#fed7aa; }
   .pm .pmh { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  .pm .pmh .meta { flex:1; min-width:180px; color:var(--sub); font-size:12px; }
-  .pm .ptext { white-space:pre-wrap; word-break:break-word; margin:6px 0 0; padding-left:22px; font-size:13px; }
+  .pm .pmh .meta { flex:1; min-width:180px; color:var(--sub); font-size:12px; line-height:1.5; }
+  .pm .ptext { white-space:pre-wrap; word-break:break-word; margin:8px 0 0; padding-left:22px; font-size:13px; color:var(--text2); line-height:1.7; }
   .pm .ptext.clamp { max-height:6.6em; overflow:hidden; -webkit-mask-image:linear-gradient(180deg,#000 60%,transparent); mask-image:linear-gradient(180deg,#000 60%,transparent); }
-  .pm .more { margin-left:22px; font-size:12px; color:var(--blue); cursor:pointer; }
-  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
-  .chip { font-size:12px; padding:0 8px; border-radius:10px; background:#f2f3f5; }
-  .chip.wait { color:var(--amber); }
-  .chip.p0 { background:#fdecea; color:#c0392b; } .chip.p1 { background:#fff4e0; color:#b9770e; } .chip.p2 { background:#e8f4fd; color:#1f6fb2; }
-  .seg { display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
-  .seg label { padding:5px 12px; cursor:pointer; font-size:13px; }
+  .pm .more { float:right; font-size:12px; color:var(--primary); cursor:pointer; }
+
+  /* ---------- 标签 ---------- */
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .chip { display:inline-flex; align-items:center; height:22px; padding:0 8px; border-radius:6px; background:#f1f5f9; color:var(--sub); font-size:12px; line-height:1; border:1px solid transparent; white-space:nowrap; }
+  .chip.wait { background:#fffbeb; color:#b45309; border-color:#fde68a; }
+  .chip.p0 { background:#fef2f2; color:#dc2626; border-color:#fecaca; }
+  .chip.p1 { background:#fff7ed; color:#c2410c; border-color:#fed7aa; }
+  .chip.p2 { background:var(--primary-50); color:var(--primary-d); border-color:var(--primary-200); }
+  .seg { display:inline-flex; border:1px solid var(--line2); border-radius:999px; padding:2px; background:#f4f7fc; }
+  .seg label { padding:4px 14px; cursor:pointer; font-size:13px; border-radius:999px; color:var(--sub); transition:all .16s; }
   .seg input { display:none; }
-  .seg label:has(input:checked) { background:var(--blue); color:#fff; }
+  .seg label:has(input:checked) { background:#fff; color:var(--primary); font-weight:600; box-shadow:0 1px 4px rgba(15,23,42,.1); }
   .s-queued { color:var(--sub); } .s-sent,.s-running { color:var(--amber); } .s-done { color:var(--green); } .s-failed { color:var(--red); } .s-stopped { color:var(--sub); }
-  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:12px; margin-top:12px; }
-  .run { border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; max-height:560px; background:#fff; }
-  .run .hd { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); }
-  .run .hd b { flex:1; }
-  .run .body { overflow:auto; padding:8px 12px; font-size:13px; flex:1; }
+  .chip.s-queued { background:#f8fafc; color:#64748b; border-color:#e2e8f0; }
+  .chip.s-sent,.chip.s-running { background:#fff7ed; color:#b45309; border-color:#fed7aa; }
+  .chip.s-done { background:#ecfdf5; color:#047857; border-color:#a7f3d0; }
+  .chip.s-failed { background:#fef2f2; color:#dc2626; border-color:#fecaca; }
+  .chip.s-stopped { background:#f8fafc; color:#64748b; border-color:#e2e8f0; }
+
+  /* ---------- 详情：每台一块 ---------- */
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap:14px; margin-top:14px; }
+  .run { border:1px solid var(--line); border-radius:var(--r); display:flex; flex-direction:column; max-height:560px; background:#fff; box-shadow:var(--sh-sm); overflow:hidden; }
+  .run .hd { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); background:linear-gradient(180deg,#f8fbff,#fff); }
+  .run .hd b { flex:1; color:var(--text); }
+  .run .body { overflow:auto; padding:10px 12px; font-size:13px; flex:1; background:#fcfdff; }
   .it { margin:3px 0; white-space:pre-wrap; word-break:break-word; }
-  .it.tool { color:#5b6ef0; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+  .it.tool { color:#4f5bd5; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
   .it.info { color:var(--sub); font-size:12px; }
   .it.err { color:var(--red); }
-  .result { border-top:1px dashed var(--line); margin-top:8px; padding-top:8px; white-space:pre-wrap; word-break:break-word; }
-  .result.bad { color:var(--red); }
-  code.cmd { display:block; background:#1f2329; color:#e8e8e8; padding:8px 10px; border-radius:6px; font-size:12px; word-break:break-all; white-space:pre-wrap; margin:6px 0; }
-  .login { max-width:420px; margin:12vh auto; }
-  @media (max-width: 460px) { .login { margin:12vh 12px; } }
-  .empty { color:var(--sub); padding:20px 0; text-align:center; }
+  .result { border-top:1px dashed var(--line2); margin-top:8px; padding:8px 10px; white-space:pre-wrap; word-break:break-word; background:#f7faff; border-radius:8px; color:var(--text2); }
+  .result.bad { color:var(--red); background:#fef6f6; }
+  code.cmd { display:block; background:linear-gradient(135deg,#0f172a,#1e293b); color:#e6edf7; padding:10px 12px; border-radius:var(--r-sm); font-size:12px; word-break:break-all; white-space:pre-wrap; margin:0; border:1px solid #1e293b; font-family:ui-monospace,Menlo,Consolas,monospace; }
+  code { background:#f1f5f9; color:#475569; padding:1px 5px; border-radius:4px; font-size:12.5px; font-family:ui-monospace,Menlo,Consolas,monospace; }
+  .jsec { margin:10px 0 14px; }
+  .jlabel { font-size:12px; color:var(--sub); margin-bottom:5px; font-weight:500; }
+
+  /* ---------- 弹层 ---------- */
+  #sessModal,#resModal { backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px); padding:24px; }
+  #sessModal .card,#resBox { border-radius:var(--r-xl); border:1px solid #e3edfb; box-shadow:var(--sh-lg); }
+  #resBox h2 { position:sticky; top:-16px; background:#fff; z-index:2; margin:-16px -18px 14px; padding:14px 18px; border-radius:var(--r-xl) var(--r-xl) 0 0; border-bottom:1px solid var(--line); }
+  .rprompt { white-space:pre-wrap; background:#f8fafc; border:1px solid var(--line); border-left:3px solid var(--primary-200); border-radius:var(--r-sm); padding:10px 12px; font-size:13px; line-height:1.7; color:var(--text2); max-height:130px; overflow:auto; }
+  .rblk { border-top:1px solid var(--line); padding-top:12px; margin-top:14px; }
+  .rblk:first-of-type { border-top:0; padding-top:0; margin-top:14px; }
+  .rhead { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+  .rhead b { color:var(--text); font-size:13.5px; }
+  .rtext { white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.75; color:var(--text2); background:#fcfdff; border-radius:var(--r-sm); padding:10px 12px; }
+
+  /* ---------- 登录 ---------- */
+  body:has(.login) { background:radial-gradient(1100px 560px at 50% -8%,#dbeafe 0%,#eff6ff 42%,#f7fafd 78%); }
+  .login { max-width:400px; margin:13vh auto; padding:34px 30px 28px; border-radius:var(--r-xl); border:1px solid #e6effb; box-shadow:var(--sh-lg); text-align:center; }
+  .login-logo { width:52px; height:52px; margin:0 auto 14px; border-radius:15px; display:grid; place-items:center; color:#fff;
+    background:linear-gradient(135deg,#3b82f6,#1d4ed8); box-shadow:0 10px 24px rgba(37,99,235,.32); }
+  .login h2 { justify-content:center; border:0; padding:0; margin:0 0 6px; font-size:21px; }
+  .login > p { margin:8px 0 0; }
+  .login .row { flex-direction:column; align-items:stretch; gap:12px; margin-top:18px; }
+  .login input { width:100%; height:42px; font-size:14px; border-radius:var(--r); }
+  .login button { width:100%; height:42px; font-size:15px; border-radius:var(--r); }
+  .empty { color:var(--muted); padding:26px 12px; text-align:center; background:#fbfdff; border:1px dashed var(--line2); border-radius:var(--r); }
+  .empty a { color:var(--primary); }
+
+  /* 会话选择列表 */
+  .srow { padding:10px 12px; border:1px solid transparent; border-radius:var(--r); transition:background .16s,border-color .16s; }
+  .srow + .srow { margin-top:2px; }
+  .srow:hover { background:var(--primary-50); border-color:var(--primary-200); }
+  .srow .stitle { display:flex; align-items:center; gap:6px; flex-wrap:nowrap; min-width:0; color:var(--text); }
+  .srow .stext { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+  .srow .smeta { color:var(--muted); font-size:12px; margin-top:3px; padding-left:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* ---------- 窄屏 ---------- */
+  @media (max-width: 1240px) { .side{ width:206px; } .brand b{ font-size:14px; } }
+  @media (max-width: 1100px) { main { grid-template-columns:280px 1fr; } header h1 .sub{ display:none; } }
+  @media (max-width: 900px) {
+    .app { flex-direction:column; }
+    .side { width:auto; height:auto; position:static; flex-direction:row; align-items:center; gap:10px; padding:10px 12px; border-right:0; border-bottom:1px solid var(--line); overflow-x:auto; }
+    .brand { padding:0; flex:none; }
+    .brand i { display:none; }
+    .tabs { flex-direction:row; padding:0; gap:4px; }
+    .tabs button { width:auto; height:34px; padding:0 14px; }
+    .side-foot { display:none; }
+    header { padding:10px 14px; flex-wrap:wrap; row-gap:8px; }
+    header h1 { font-size:16px; white-space:nowrap; }
+    header h1 .sub { display:none; }
+    .hleft { width:100%; }
+    .crumb { display:none; }
+    .hdr-right { margin-left:0; width:100%; justify-content:flex-end; flex-wrap:wrap; }
+    .hdr-right .avatar, .hdr-right .vsep { display:none; }
+    main { grid-template-columns:1fr; padding:14px 14px 24px; }
+    .tip { padding:8px 14px; }
+  }
+  @media (max-width: 520px) {
+    .stat { height:24px; padding:0 8px; font-size:11px; }
+    .hdr-right button { height:30px; padding:0 10px; font-size:12px; }
+    .tbar { margin-left:0; width:100%; margin-top:8px; }
+    h2 { flex-wrap:wrap; }
+    .m { padding:9px 10px; }
+    .m .one { white-space:normal; }
+    .row > label.muted { width:100%; display:flex; align-items:center; gap:8px; }
+    .row > label.muted select { flex:1; min-width:0; }
+    .row > label.muted input[type=checkbox] { flex:none; }
+    #expertHint { width:100%; }
+  }
+  @media (max-width: 460px) { .login { margin:10vh 12px; padding:26px 20px; } }
+
+  /* ================= 视觉升级 v2：对齐 linmo 后台（玻璃质感 / 浅蓝底 / 大圆角） ================= */
+  :root{
+    --bg:#eff6ff;
+    --line:#e7eef9; --line2:#dae5f4;
+    --text:#0f172a; --text2:#334155; --sub:#64748b; --muted:#94a3b8;
+    --r-sm:9px; --r:12px; --r-lg:16px; --r-xl:20px;
+    --sh-sm:0 1px 2px rgba(15,23,42,.04);
+    --sh:0 8px 26px rgba(37,99,235,.07), 0 0 0 1px rgba(15,23,42,.03), inset 0 1px 0 #fff;
+    --sh-lg:0 30px 72px rgba(23,58,130,.20), inset 0 1px 0 #fff;
+    --glass:rgba(255,255,255,.80);
+  }
+  body{
+    background:
+      radial-gradient(1100px 520px at 5% -10%, #d8e8fe 0%, rgba(216,232,254,0) 62%),
+      radial-gradient(900px 470px at 99% 0%, #dff1fe 0%, rgba(223,241,254,0) 58%),
+      radial-gradient(820px 560px at 52% 112%, #ece9fe 0%, rgba(236,233,254,0) 62%),
+      #f4f8fd;
+    background-attachment:fixed;
+  }
+  ::selection{ background:rgba(37,99,235,.18); }
+
+  /* 侧边栏 */
+  .side{ width:228px; background:rgba(255,255,255,.72);
+    -webkit-backdrop-filter:blur(20px) saturate(140%); backdrop-filter:blur(20px) saturate(140%);
+    border-right:1px solid rgba(15,23,42,.055); padding:20px 0 16px; }
+  .brand{ padding:0 18px 20px; gap:11px; }
+  .brand .logo{ width:36px; height:36px; border-radius:11px;
+    background:linear-gradient(140deg,#60a5fa,#2563eb 55%,#1e40af);
+    box-shadow:0 10px 22px rgba(37,99,235,.34), inset 0 1px 0 rgba(255,255,255,.45); }
+  .brand b{ font-size:15px; letter-spacing:.15px; }
+  .brand i{ display:block; margin-top:1px; font-size:9px; letter-spacing:2.6px; color:#a7b6ca; }
+  .tabs{ padding:0 12px; gap:4px; }
+  .tabs button{ height:42px; border-radius:11px; padding:0 12px; gap:9px; font-size:13.5px; color:#5c6c83; }
+  .tabs button:hover{ background:rgba(37,99,235,.055); color:var(--primary); }
+  .tabs button.on{ background:linear-gradient(90deg,rgba(37,99,235,.14),rgba(37,99,235,.055)); color:var(--primary-d);
+    font-weight:600; box-shadow:inset 0 0 0 1px rgba(37,99,235,.10); }
+  .side-foot{ margin:auto 14px 0; padding:13px 13px; border-radius:14px; border:1px solid rgba(255,255,255,.95);
+    background:linear-gradient(160deg,rgba(239,246,255,.96),rgba(255,255,255,.55));
+    box-shadow:0 10px 24px rgba(37,99,235,.07), inset 0 1px 0 #fff; color:#8a9ab0; font-size:11.5px; line-height:1.7; }
+  .side-foot b{ display:block; font-size:12.5px; color:#334155; margin-bottom:1px; font-weight:600; }
+
+  /* 顶栏 */
+  header{ height:66px; padding:0 24px; background:rgba(255,255,255,.70);
+    -webkit-backdrop-filter:blur(20px) saturate(150%); backdrop-filter:blur(20px) saturate(150%);
+    border-bottom:1px solid rgba(15,23,42,.055); }
+  .crumb{ font-size:11.5px; letter-spacing:.3px; color:#9aabbf; }
+  header h1{ font-size:20px; font-weight:650; letter-spacing:-.3px; margin-top:1px; white-space:nowrap; }
+  header h1 .sub{ font-size:12px; color:#93a3b8; font-weight:400; margin-left:4px; }
+  .stat{ height:30px; padding:0 11px; border-radius:9px; white-space:nowrap; background:rgba(255,255,255,.80);
+    border:1px solid #e5eef9; box-shadow:0 1px 2px rgba(15,23,42,.03); font-size:12px; color:#7b8ba0; }
+  .stat b{ color:#0f172a; font-weight:650; }
+  .avatar{ background:linear-gradient(140deg,#eff6ff,#dbeafe); border:1px solid #cfe2fb; color:var(--primary-d); }
+
+  /* 卡片 */
+  .card{ background:var(--glass); -webkit-backdrop-filter:blur(18px) saturate(135%); backdrop-filter:blur(18px) saturate(135%);
+    border:1px solid rgba(255,255,255,.92); border-radius:16px; padding:18px 20px; box-shadow:var(--sh); }
+  h2{ font-size:14.5px; font-weight:650; letter-spacing:-.1px; padding-bottom:13px; margin-bottom:14px; border-bottom:1px solid rgba(15,23,42,.06); }
+  h2 .n{ font-size:11.5px; letter-spacing:0; }
+
+  /* 概览数字 */
+  .kpis{ grid-column:1 / -1; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+  .kpi{ display:flex; align-items:center; gap:13px; padding:15px 17px; border-radius:15px;
+    background:rgba(255,255,255,.80); border:1px solid rgba(255,255,255,.95); box-shadow:var(--sh);
+    -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px); }
+  .kpi .ic{ width:41px; height:41px; flex:none; border-radius:12px; display:grid; place-items:center; color:#fff; }
+  .kpi .ic.b{ background:linear-gradient(140deg,#60a5fa,#2563eb); box-shadow:0 8px 18px rgba(37,99,235,.28); }
+  .kpi .ic.g{ background:linear-gradient(140deg,#34d399,#059669); box-shadow:0 8px 18px rgba(5,150,105,.24); }
+  .kpi .ic.a{ background:linear-gradient(140deg,#fbbf24,#d97706); box-shadow:0 8px 18px rgba(217,119,6,.24); }
+  .kpi .ic.v{ background:linear-gradient(140deg,#a78bfa,#7c3aed); box-shadow:0 8px 18px rgba(124,58,237,.24); }
+  .kpi .kv{ font-size:22px; font-weight:660; color:#0f172a; line-height:1.15; letter-spacing:-.6px; }
+  .kpi .kv small{ font-size:12.5px; font-weight:500; color:#9aabbf; letter-spacing:0; }
+  .kpi .kl{ font-size:11.5px; color:#8294ab; margin-top:2px; }
+
+  /* 电脑行 */
+  .m{ align-items:flex-start; gap:10px; padding:11px; margin-bottom:8px; border-radius:13px;
+    border:1px solid #eaf1fa; background:linear-gradient(180deg,#fff,#fdfeff);
+    box-shadow:0 1px 2px rgba(15,23,42,.03); transition:border-color .16s, box-shadow .16s, transform .16s; }
+  .m:hover{ border-color:#c9ddfb; box-shadow:0 10px 22px rgba(37,99,235,.11); transform:translateY(-1px); }
+  .m .mava{ width:32px; height:32px; flex:none; border-radius:10px; display:grid; place-items:center;
+    color:#2563eb; background:linear-gradient(140deg,#f2f8ff,#dbeafe); border:1px solid #d8e8fc; }
+  .m .nm{ font-size:13.5px; gap:2px; }
+  .m .one{ font-size:11.5px; color:#7f90a6; line-height:1.75; }
+  .m .dline{ display:flex; align-items:center; gap:6px; }
+  .m .dtxt{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .m .dline a{ flex:none; margin-left:auto; padding-left:2px; }
+  .m .meta{ font-size:11.5px; }
+
+  /* 表单控件 */
+  input[type=text],input[type=password],select{ height:34px; border-radius:9px; border-color:#dae5f4; background:#fff; }
+  textarea{ border-radius:11px; border-color:#dae5f4; background:#fff; padding:12px 14px; }
+  textarea:focus,input:focus,select:focus{ border-color:#93c5fd; box-shadow:0 0 0 3px rgba(37,99,235,.12); }
+  .seg{ border-radius:11px; padding:3px; background:#eef4fc; border-color:#e2ebf8; }
+  .seg label{ border-radius:9px; padding:4px 13px; font-size:12.5px; }
+  .seg label:has(input:checked){ color:var(--primary-d); box-shadow:0 2px 6px rgba(37,99,235,.14); }
+
+  /* 按钮 */
+  button{ height:34px; border-radius:9px; border:1px solid #dbe6f5; background:#fff; font-size:13px;
+    box-shadow:0 1px 2px rgba(15,23,42,.035); }
+  button:hover{ border-color:#bcd6fb; background:#f6faff; }
+  button.primary{ background:linear-gradient(180deg,#3b82f6,#2563eb); border-color:#2563eb;
+    box-shadow:0 7px 18px rgba(37,99,235,.28), inset 0 1px 0 rgba(255,255,255,.28); }
+  button.primary:hover{ background:linear-gradient(180deg,#4b8ef8,#1d4ed8); border-color:#1d4ed8; }
+  .mini{ height:26px; border-radius:7px; padding:0 10px; font-size:12px; background:#fff; }
+  .tbar button{ height:30px; border-radius:8px; }
+
+  /* 任务表 */
+  .tthead{ display:grid; grid-template-columns:30px minmax(0,1fr) 108px 92px; gap:12px; align-items:center;
+    padding:0 12px 9px; font-size:11.5px; color:#96a6ba; letter-spacing:.4px; border-bottom:1px solid rgba(15,23,42,.06); }
+  .tthead > span:last-child{ text-align:right; }
+  .task{ display:grid; grid-template-columns:30px minmax(0,1fr) 108px 92px; gap:12px; align-items:center;
+    padding:12px; margin:0; border:0; border-bottom:1px solid rgba(15,23,42,.05); border-radius:0;
+    background:transparent; cursor:pointer; transition:background .15s; }
+  .task:hover{ background:rgba(37,99,235,.035); border-color:transparent; box-shadow:none; }
+  .task:last-child{ border-bottom:0; }
+  .task:first-child{ margin-top:0; }
+  .task.sel{ background:rgba(37,99,235,.062); box-shadow:inset 3px 0 0 var(--primary); border-radius:10px; }
+  .task.pick{ background:#fffaf1; border-radius:10px; }
+  .task .tpick{ margin:0; }
+  .task .tcell{ min-width:0; }
+  .task .p{ font-size:13.5px; font-weight:550; }
+  .task .tmeta{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:6px; padding-left:0; font-size:11.5px; }
+  .task .chips{ margin:0; gap:5px; min-width:0; }
+  .task .chips .chip{ max-width:100%; overflow:hidden; text-overflow:ellipsis; display:inline-flex; }
+  .task .tact{ display:flex; gap:6px; justify-content:flex-end; }
+
+  /* 提示词行 */
+  .pm{ padding:14px 12px; margin:0; border:0; border-radius:0; border-bottom:1px solid rgba(15,23,42,.05); }
+  .pm + .pm::before{ content:none; }
+  .pm:hover{ background:rgba(37,99,235,.035); border-color:transparent; }
+  .pm.pick{ background:#fffaf1; }
+  .pm .ptext{ padding-left:0; margin-top:8px; color:#3b4a61; }
+
+  /* 详情卡片 */
+  .run{ border-color:#e7effa; border-radius:14px; box-shadow:0 6px 18px rgba(37,99,235,.05); }
+  .run .hd{ background:linear-gradient(180deg,#f7fbff,#fff); border-bottom-color:#eaf1fa; padding:11px 13px; }
+  .run .body{ background:#fcfdff; }
+  .result{ background:#f5f9ff; border:1px solid #e6effb; }
+
+  /* 弹层 */
+  #sessModal,#resModal{ background:rgba(15,23,42,.34); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
+  #sessModal .card,#resBox{ border-radius:20px; border:1px solid rgba(255,255,255,.9); box-shadow:var(--sh-lg); }
+
+  /* 登录 */
+  body:has(.login){
+    background:
+      radial-gradient(900px 520px at 18% 0%, #cfe4fe 0%, rgba(207,228,254,0) 62%),
+      radial-gradient(760px 480px at 88% 12%, #dff2fe 0%, rgba(223,242,254,0) 60%),
+      radial-gradient(700px 520px at 62% 100%, #e9e6ff 0%, rgba(233,230,255,0) 62%),
+      #f3f8fe;
+  }
+  .login{ max-width:404px; margin:12vh auto; padding:38px 34px 30px; border-radius:20px;
+    background:rgba(255,255,255,.88); border:1px solid rgba(255,255,255,.95);
+    -webkit-backdrop-filter:blur(22px) saturate(140%); backdrop-filter:blur(22px) saturate(140%); box-shadow:var(--sh-lg); }
+  .login-logo{ width:54px; height:54px; border-radius:16px; margin-bottom:16px;
+    background:linear-gradient(140deg,#60a5fa,#2563eb 55%,#1d4ed8);
+    box-shadow:0 12px 26px rgba(37,99,235,.34), inset 0 1px 0 rgba(255,255,255,.45); }
+  .login h2{ font-size:21px; font-weight:650; letter-spacing:-.3px; margin-bottom:2px; }
+  .login input{ height:44px; border-radius:11px; }
+  .login button{ height:44px; border-radius:11px; font-size:15px; font-weight:600; }
+
+  /* 表单行：左侧标签 + 右侧控件，像后台表单 */
+  .frow{ display:flex; align-items:flex-start; gap:14px; padding:11px 0; border-bottom:1px dashed #eaf1fa; }
+  .frow:first-of-type{ padding-top:2px; }
+  .flab{ flex:none; width:74px; padding-top:8px; font-size:12.5px; color:#8697ab; text-align:right; letter-spacing:.2px; }
+  .fctl{ flex:1; min-width:0; display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+  .fctl.col{ display:block; }
+  .fctl .inline{ display:inline-flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .fctl > label.muted{ display:inline-flex; align-items:center; gap:6px; }
+  .fctl textarea{ min-height:96px; }
+  .fctl select{ height:36px; }
+  .cfoot{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:14px; padding-top:14px; border-top:1px solid #eef3fa; }
+  .cfoot #target{ flex:1; min-width:180px; }
+  .cfoot #sendBtn{ height:38px; padding:0 26px; font-size:14px; font-weight:600; border-radius:10px; }
+  .card > p.muted{ margin:0 0 10px; }
+  @media (max-width: 640px) { .cfoot #sendBtn{ width:100%; } }
+  @media (max-width: 640px) {
+    .frow{ flex-direction:column; gap:6px; }
+    .flab{ width:auto; padding-top:0; text-align:left; font-size:12px; }
+    .fctl{ width:100%; }
+    .fctl input[type=text],.fctl select{ width:100%; }
+    .fctl input#workdir{ width:100% !important; }
+  }
+
+  /* 窄屏适配 */
+  @media (max-width: 1200px) { .kpis{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  @media (max-width: 1080px) {
+    .tthead{ display:none; }
+    .task{ grid-template-columns:28px minmax(0,1fr) 90px; align-items:start; }
+    .task .chips{ grid-column:2 / -1; }
+    .task .tact{ grid-column:3; grid-row:1; }
+  }
+  @media (max-width: 900px) {
+    .side{ width:auto; padding:10px 12px; background:rgba(255,255,255,.85); }
+    .brand{ padding:0; }
+    .side-foot{ display:none; }
+    header{ height:auto; padding:12px 14px; }
+    .kpis{ gap:10px; }
+    .kpi{ padding:12px 14px; border-radius:13px; }
+    .kpi .ic{ width:36px; height:36px; border-radius:10px; }
+    .kpi .kv{ font-size:19px; }
+  }
+  @media (max-width: 560px) {
+    .kpis{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .kpi .kl{ font-size:11px; }
+    .kpi .kv{ font-size:18px; }
+    .task{ grid-template-columns:26px minmax(0,1fr); padding:12px 6px; }
+    .task .tact{ grid-column:2; grid-row:auto; justify-content:flex-start; margin-top:8px; }
+  }
 </style>
 </head>
 <body>
@@ -141,7 +518,9 @@ async function api(path, opt = {}) {
 }
 
 function renderLogin(msg = '') {
-  $('#app').innerHTML = `<div class="card login"><h2>WorkBuddy 总控</h2>
+  $('#app').innerHTML = `<div class="card login">
+    <div class="login-logo"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+    <h2>WorkBuddy 总控</h2>
     <p class="muted">内部管理页面，需要口令才能进。</p>
     <div class="row"><input id="k" type="password" placeholder="登录口令" autocomplete="current-password"><button class="primary" id="go">进去</button></div>
     <p style="color:var(--red)">${esc(msg)}</p>
@@ -167,78 +546,140 @@ async function login(pass) {
 
 function shell() {
   $('#app').innerHTML = `
-  <header><h1>WorkBuddy 总控</h1><span class="tabs"><button class="on" data-view="tasks">任务</button><button data-view="prompts">提示词</button></span><span class="sub">指令交给空闲的电脑干，也能让每台都做一遍</span>
-    <span class="hdr-right"><button id="upBtn" title="给还没升级的电脑发一条升级指令">升级连接程序</button><button id="addBtn">加电脑</button><button id="logoutBtn" title="退出登录">退出</button></span></header>
-  <div class="tip" id="secTip" style="display:none"><span>⚠ 网页口令还是默认的（跟机器口令同一串）：拿到过旧链接的人也能进。建议改一个自己的。</span><a href="#" id="secGo">去改</a></div>
-  <main id="viewTasks">
-    <section>
-      <div class="card"><h2>电脑 <span class="n" id="mcount"></span></h2>
-        <div class="row" style="margin:0 0 10px"><button id="pickAll">全选在线的</button><button id="pickNone">都不选</button><span class="muted" style="font-size:12px">不勾就是全部电脑都算。</span></div>
-        <div id="mlist"></div></div>
-      <div class="card" id="joinCard" style="margin-top:16px; display:none"></div>
-    </section>
-    <section>
-      <div class="card">
-        <div class="row" style="margin:0 0 10px">
-          <span class="seg"><label><input type="radio" name="mode" value="pool" ${MODE === 'pool' ? 'checked' : ''}>派给空闲的电脑</label><label><input type="radio" name="mode" value="all" ${MODE === 'all' ? 'checked' : ''}>每台都做一遍</label></span>
-          <span id="poolOpts" class="row" style="margin:0">
-            <label class="muted"><input type="checkbox" id="split"> 每行算一件活</label>
-            <label class="muted" title="后一行等前一行做完，带上它的结果接着干，优先交给做前一行的那台，不用同步文件"><input type="checkbox" id="chain"> 按行接力</label>
-          </span>
-          <select id="prio" title="等电脑的活先派紧急的，再派重要的，最后派加大力度发展的"><option value="0">紧急</option><option value="1" selected>重要</option><option value="2">加大力度发展</option></select>
-          <label class="muted" title="连接程序自动做：开工前先拉最新代码，做完自动提交并推送；冲突或推送失败会标成没做成"><input type="checkbox" id="git"> 代码用 Git 同步</label>
+  <div class="app">
+    <aside class="side">
+      <div class="brand">
+        <span class="logo"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+        <div><b>WorkBuddy 总控</b><i>FLEET CONSOLE</i></div>
+      </div>
+      <nav class="tabs">
+        <button class="on" data-view="tasks"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>任务</button>
+        <button data-view="prompts"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>提示词</button>
+      </nav>
+      <div class="side-foot"><div><b>多机协同</b></div><div>指令交给空闲的电脑干</div></div>
+    </aside>
+    <div class="main">
+      <header>
+        <div class="hleft">
+          <div class="crumb">控制台 <span>/</span> <b id="crumbNow">任务</b></div>
+          <h1 id="pageTitle">任务<span class="sub">指令交给空闲的电脑干，也能让每台都做一遍</span></h1>
         </div>
-        <div class="row" style="margin:0 0 10px">
-          <label class="muted" title="让某台电脑用指定的专家干活（WorkBuddy 里的专家包，例如高级开发工程师）">专家 <select id="expert"></select></label>
-          <label class="muted" title="指定这活用的模型；不填就用那台电脑自己的默认模型">模型 <select id="model"></select></label>
-          <span class="muted" id="expertHint"></span>
+        <span class="hdr-right">
+          <span class="stat" title="在线电脑 / 全部电脑"><i class="dot on"></i>在线 <b id="stOnline">0/0</b></span>
+          <span class="stat" title="正在干活的电脑数"><i class="dot busy"></i>在跑 <b id="stBusy">0</b></span>
+          <span class="vsep"></span>
+          <span class="avatar" title="已登录">WB</span><button id="upBtn" title="给还没升级的电脑发一条升级指令">升级连接程序</button><button id="addBtn">加电脑</button><button id="logoutBtn" title="退出登录">退出</button></span>
+      </header>
+      <div class="tip" id="secTip" style="display:none"><span>⚠ 网页口令还是默认的（跟机器口令同一串）：拿到过旧链接的人也能进。建议改一个自己的。</span><a href="#" id="secGo">去改</a></div>
+      <main id="viewTasks">
+        <div class="kpis">
+          <div class="kpi"><span class="ic b"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+            <div><div class="kv" id="kOnline">—</div><div class="kl">在线电脑</div></div></div>
+          <div class="kpi"><span class="ic a"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg></span>
+            <div><div class="kv" id="kRun">—</div><div class="kl">正在执行</div></div></div>
+          <div class="kpi"><span class="ic g"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <div><div class="kv" id="kDone">—</div><div class="kl">已完成任务</div></div></div>
+          <div class="kpi"><span class="ic v"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+            <div><div class="kv" id="kWait">—</div><div class="kl">排队 / 等待中</div></div></div>
         </div>
-        <div class="row" id="sessBar" style="margin:0 0 10px">
-          <span class="muted">会话 <span id="sessChip" class="chip">新会话</span></span>
-          <button id="sessPick" title="列出最近跑过的会话，挑一条接着做（只派给会话所在的那台电脑）">选一条旧会话</button>
-          <button id="sessClear" style="display:none">改回新会话</button>
-          <span class="muted" id="sessHint"></span>
-        </div>
-        <div id="sessModal" style="display:none; position:fixed; inset:0; background:rgba(20,24,34,.38); z-index:60; align-items:center; justify-content:center">
-          <div class="card" style="width:min(760px,92vw); max-height:82vh; overflow:auto; margin:0">
-            <h2 style="margin-top:0">选一条会话接着做<button id="sessClose" style="margin-left:auto">关</button></h2>
-            <p class="muted" style="margin-top:0">会话只存在于跑它的那台电脑上。选了之后机器和目录都会锁死，不能改。</p>
-            <input type="text" id="sessSearch" placeholder="搜会话 id、任务内容、目录、机器…" style="width:100%; margin-bottom:10px">
-            <div id="sessList"></div>
+        <section>
+          <div class="card"><h2>电脑 <span class="n" id="mcount"></span></h2>
+            <div class="row" style="margin:0 0 10px"><button id="pickAll">全选在线的</button><button id="pickNone">都不选</button><span class="muted" style="font-size:12px">不勾就是全部电脑都算。</span></div>
+            <div id="mlist"></div></div>
+        </section>
+        <section>
+          <div class="card" id="joinCard" style="margin-bottom:16px; display:none"></div>
+          <div class="card">
+            <h2>发一条件活 <span class="n">写好要干什么，挑好谁来干，发出去就排上队</span></h2>
+            <div class="frow">
+              <span class="flab">派活方式</span>
+              <div class="fctl">
+                <span class="seg"><label><input type="radio" name="mode" value="pool" ${MODE === 'pool' ? 'checked' : ''}>派给空闲的电脑</label><label><input type="radio" name="mode" value="all" ${MODE === 'all' ? 'checked' : ''}>每台都做一遍</label></span>
+                <span id="poolOpts" class="inline">
+                  <label class="muted"><input type="checkbox" id="split"> 每行算一件活</label>
+                  <label class="muted" title="后一行等前一行做完，带上它的结果接着干，优先交给做前一行的那台，不用同步文件"><input type="checkbox" id="chain"> 按行接力</label>
+                </span>
+              </div>
+            </div>
+            <div class="frow">
+              <span class="flab">优先级</span>
+              <div class="fctl">
+                <label class="muted" title="等电脑的活先派紧急的，再派重要的，最后派加大力度发展的"><select id="prio"><option value="0">紧急</option><option value="1" selected>重要</option><option value="2">加大力度发展</option></select></label>
+                <label class="muted" title="连接程序自动做：开工前先拉最新代码，做完自动提交并推送；冲突或推送失败会标成没做成"><input type="checkbox" id="git"> 代码用 Git 同步</label>
+              </div>
+            </div>
+            <div class="frow">
+              <span class="flab">专家 / 模型</span>
+              <div class="fctl">
+                <select id="expert" style="flex:1 1 220px; min-width:0" title="让某台电脑用指定的专家干活（WorkBuddy 里的专家包，例如高级开发工程师）"></select>
+                <select id="model" style="flex:1 1 200px; min-width:0" title="指定这活用的模型；不填就用那台电脑自己的默认模型"></select>
+                <span class="muted" id="expertHint"></span>
+              </div>
+            </div>
+            <div class="frow" id="sessBar">
+              <span class="flab">会话</span>
+              <div class="fctl">
+                <span id="sessChip" class="chip">新会话</span>
+                <button id="sessPick" title="列出最近跑过的会话，挑一条接着做（只派给会话所在的那台电脑）">选一条旧会话</button>
+                <button id="sessClear" style="display:none">改回新会话</button>
+                <span class="muted" id="sessHint"></span>
+              </div>
+            </div>
+            <div id="sessModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.42); z-index:60; align-items:center; justify-content:center">
+              <div class="card" style="width:min(760px,92vw); max-height:82vh; overflow:auto; margin:0">
+                <h2 style="margin-top:0">选一条会话接着做<button id="sessClose" style="margin-left:auto">关</button></h2>
+                <p class="muted" style="margin-top:0">会话只存在于跑它的那台电脑上。选了之后机器和目录都会锁死，不能改。</p>
+                <input type="text" id="sessSearch" placeholder="搜会话 id、任务内容、目录、机器…" style="width:100%; margin-bottom:10px">
+                <div id="sessList"></div>
+              </div>
+            </div>
+            <div id="resModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.42); z-index:70; align-items:center; justify-content:center">
+              <div class="card" id="resBox" style="width:min(900px,94vw); max-height:86vh; overflow:auto; margin:0"></div>
+            </div>
+            <div id="afterBar" class="muted" style="display:none; margin-bottom:8px"></div>
+            <div class="frow">
+              <span class="flab">任务说明</span>
+              <div class="fctl col">
+                <textarea id="prompt" placeholder="要干什么？例如：把 ~/Downloads 里的发票按月份整理好，列个清单给我（Ctrl+Enter 发送）"></textarea>
+              </div>
+            </div>
+            <div class="frow" style="border-bottom:0; padding-bottom:0">
+              <span class="flab">执行目录</span>
+              <div class="fctl">
+                <input type="text" id="workdir" style="width:300px" title="可填绝对路径（如 D:\code\项目 或 /Users/你/code/项目）；只填文件夹名（如 linmo-pig-full）会放在那台电脑的默认目录下；不填就用默认目录" placeholder="不填就用该机默认目录">
+                <label class="muted"><input type="checkbox" id="cont"> 接着上一轮聊</label>
+              </div>
+            </div>
+            <div class="cfoot">
+              <span class="muted" id="target"></span>
+              <span class="muted" style="font-size:12px">Ctrl+Enter 发出去</span>
+              <button class="primary" id="sendBtn">发出去</button>
+            </div>
           </div>
-        </div>
-        <div id="resModal" style="display:none; position:fixed; inset:0; background:rgba(20,24,34,.38); z-index:70; align-items:center; justify-content:center">
-          <div class="card" id="resBox" style="width:min(900px,94vw); max-height:86vh; overflow:auto; margin:0"></div>
-        </div>
-        <div id="afterBar" class="muted" style="display:none; margin-bottom:8px"></div>
-        <textarea id="prompt" placeholder="要干什么？例如：把 ~/Downloads 里的发票按月份整理好，列个清单给我（Ctrl+Enter 发送）"></textarea>
-        <div class="row">
-          <button class="primary" id="sendBtn">发出去</button>
-          <span id="target" class="muted"></span>
-          <label class="muted"><input type="checkbox" id="cont"> 接着上一轮聊</label>
-          <input type="text" id="workdir" title="可填绝对路径（如 D:\code\项目 或 /Users/你/code/项目）；只填文件夹名（如 linmo-pig-full）会放在那台电脑的默认目录下；不填就用默认目录" placeholder="在哪个文件夹干（文件夹名＝放在该机默认目录下；不填用默认）">
-        </div>
-      </div>
-      <div class="card" style="margin-top:16px"><h2>任务 <span class="n" id="tcount"></span>
-        <span class="tbar"><button id="tPickAll">全选</button><button id="tPickDone" title="勾上已经跑完、没成、已停的那些，方便一次删掉">选中已结束</button><button id="tPickNone">清除</button><button id="tDel" class="danger" disabled>删除选中</button></span></h2>
-        <p class="muted" style="margin:0 0 8px">双击一条任务，直接弹出它各台的执行结果。</p><div id="tlist"></div></div>
-      <div id="detail"></div>
-    </section>
-  </main>
-  <main id="viewPrompts" style="display:none">
-    <section>
-      <div class="card">
-        <h2>提示词 <span class="n" id="pcount"></span>
-          <span class="tbar">
-            <input type="text" id="pSearch" placeholder="搜内容、目录、专家…" style="width:220px">
-            <button id="pReload">刷新</button>
-            <button id="pDel" class="danger" disabled>删除选中</button>
-          </span></h2>
-        <p class="muted">每次发出去的提示词都记在这儿（勾了「每行算一件活」的，一行记一条）。点「拿去用」把文字填回发任务框，改两笔就能再发。</p>
-        <div id="plist"></div>
-      </div>
-    </section>
-  </main>`;
+          <div class="card" style="margin-top:16px"><h2>任务 <span class="n" id="tcount"></span>
+            <span class="tbar"><button id="tPickAll">全选</button><button id="tPickDone" title="勾上已经跑完、没成、已停的那些，方便一次删掉">选中已结束</button><button id="tPickNone">清除</button><button id="tDel" class="danger" disabled>删除选中</button></span></h2>
+            <p class="muted" style="margin:0 0 8px">双击一条任务，直接弹出它各台的执行结果。</p><div id="tlist"></div></div>
+          <div id="detail"></div>
+        </section>
+      </main>
+      <main id="viewPrompts" style="display:none">
+        <section>
+          <div class="card">
+            <h2>提示词 <span class="n" id="pcount"></span>
+              <span class="tbar">
+                <input type="text" id="pSearch" placeholder="搜内容、目录、专家…" style="width:220px">
+                <button id="pReload">刷新</button>
+                <button id="pDel" class="danger" disabled>删除选中</button>
+              </span></h2>
+            <p class="muted">每次发出去的提示词都记在这儿（勾了「每行算一件活」的，一行记一条）。点「拿去用」把文字填回发任务框，改两笔就能再发。</p>
+            <div id="plist"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>`;
+  // 毛玻璃卡片会变成 position:fixed 的定位参照，弹层必须挪到 body 下，否则会跟着卡片偏移
+  for (const id of ['sessModal', 'resModal']) { const el = $('#' + id); if (el && el.parentElement !== document.body) document.body.appendChild(el); }
   $('#sendBtn').onclick = sendTask;
   // 会话：默认新会话；选了一条旧会话就接着它的上下文做
   $('#sessPick').onclick = openSessModal;
@@ -370,24 +811,25 @@ function renderJoin() {
     return;
   }
   const k = encodeURIComponent(joinKey);
-  card.innerHTML = `<h2>加一台电脑</h2>
-    <p class="muted">在那台电脑上打开终端，粘贴一行回车。装好后它自己连上来，开机自动连。电脑在哪个网络都行。</p>
-    <b>Mac</b><code class="cmd">curl -fsSL "${esc(hub)}/join.sh?t=${esc(k)}" | bash</code>
-    <b>Windows（PowerShell）</b><code class="cmd">irm "${esc(hub)}/join.ps1?t=${esc(k)}" | iex</code>
+  card.innerHTML = `<h2>加一台电脑<button id="joinX" style="margin-left:auto">收起</button></h2>
+    <p class="muted" style="margin-top:0">在那台电脑上打开终端，粘贴一行回车。装好后它自己连上来，开机自动连。电脑在哪个网络都行。</p>
+    <div class="jsec"><div class="jlabel">Mac / Linux</div><code class="cmd">curl -fsSL "${esc(hub)}/join.sh?t=${esc(k)}" | bash</code></div>
+    <div class="jsec"><div class="jlabel">Windows（PowerShell）</div><code class="cmd">irm "${esc(hub)}/join.ps1?t=${esc(k)}" | iex</code></div>
     <p class="muted">想给它起名字：Mac 在末尾加 <code>-s -- 名字</code>；Windows 先运行 <code>$env:FLEET_NAME="名字"</code> 再粘贴。<br>
     每台要先装好 WorkBuddy 并登录；第一次会顺带装好它的命令行版，提示登录就用同一个账号登一次。</p>
-    <h2 style="margin-top:14px">更新已有电脑的连接程序</h2>
-    <p class="muted">指定专家/模型要用新版连接程序（${esc((state.meta && state.meta.agentMin) || '1.7.0')} 及以上）。已接入的电脑跑下面这行，只换连接程序，不用重装任何东西，约 5 秒。</p>
-    <b>Windows（PowerShell）</b><code class="cmd">irm "${esc(hub)}/update.ps1?t=${esc(k)}" | iex</code>
-    <b>Mac / Linux</b><code class="cmd">curl -fsSL "${esc(hub)}/update.sh?t=${esc(k)}" | bash</code>
-    <h2 style="margin-top:14px">装终端（在别的电脑上用命令派活、看状态和结果）</h2>
-    <b>Mac / Linux</b><code class="cmd">curl -fsSL "${esc(hub)}/term.sh?t=${esc(k)}" | bash</code>
-    <b>Windows（PowerShell）</b><code class="cmd">irm "${esc(hub)}/term.ps1?t=${esc(k)}" | iex</code>
+    <h2 style="margin-top:20px">更新已有电脑的连接程序</h2>
+    <p class="muted" style="margin-top:0">指定专家/模型要用新版连接程序（${esc((state.meta && state.meta.agentMin) || '1.7.0')} 及以上）。已接入的电脑跑下面这行，只换连接程序，不用重装任何东西，约 5 秒。</p>
+    <div class="jsec"><div class="jlabel">Windows（PowerShell）</div><code class="cmd">irm "${esc(hub)}/update.ps1?t=${esc(k)}" | iex</code></div>
+    <div class="jsec"><div class="jlabel">Mac / Linux</div><code class="cmd">curl -fsSL "${esc(hub)}/update.sh?t=${esc(k)}" | bash</code></div>
+    <h2 style="margin-top:20px">装终端（在别的电脑上用命令派活、看状态和结果）</h2>
+    <div class="jsec"><div class="jlabel">Mac / Linux</div><code class="cmd">curl -fsSL "${esc(hub)}/term.sh?t=${esc(k)}" | bash</code></div>
+    <div class="jsec"><div class="jlabel">Windows（PowerShell）</div><code class="cmd">irm "${esc(hub)}/term.ps1?t=${esc(k)}" | iex</code></div>
     <p class="muted">装好后：<code>wb</code> 看各台状态；<code>wb 派 "要干什么"</code> 派活并等结果；<code>wb 看 任务号</code>；<code>wb 停 任务号</code>。</p>
-    <h2 style="margin-top:14px">安全：网页登录口令</h2>
-    <p class="muted">别人要打开这个网页，得先输这个口令（存在总控那台机器的 <code>data/pass.txt</code>）。改完立刻生效，别处已登录的浏览器会被踢下线。<b>连接程序用的是上面那串机器口令，不受影响，不用重装。</b>口令外泄过就改一个。</p>
-    <div class="row"><input type="text" id="oldPass" placeholder="现在的口令" autocomplete="off" style="width:200px"><input type="text" id="newPass" placeholder="新口令（至少 6 位）" autocomplete="new-password" style="width:200px"><button id="chPass">改口令</button></div>
+    <h2 style="margin-top:20px">安全：网页登录口令</h2>
+    <p class="muted" style="margin-top:0">别人要打开这个网页，得先输这个口令（存在总控那台机器的 <code>data/pass.txt</code>）。改完立刻生效，别处已登录的浏览器会被踢下线。<b>连接程序用的是上面那串机器口令，不受影响，不用重装。</b>口令外泄过就改一个。</p>
+    <div class="row"><input type="text" id="oldPass" placeholder="现在的口令" autocomplete="off" style="width:200px"><input type="text" id="newPass" placeholder="新口令（至少 6 位）" autocomplete="new-password" style="width:200px"><button class="primary" id="chPass">改口令</button></div>
     <p class="muted" id="passMsg"></p>`;
+  $('#joinX').onclick = () => { card.style.display = 'none'; };
   $('#chPass').onclick = async () => {
     const oldp = $('#oldPass').value.trim(), np = $('#newPass').value.trim();
     if (np.length < 6) { $('#passMsg').textContent = '新口令至少 6 位'; $('#passMsg').style.color = 'var(--red)'; return; }
@@ -406,6 +848,15 @@ function renderJoin() {
 // 这台填的目录，在它上报的「本机真实存在目录」里找不到 → 多半是个空壳目录，任务在上面等于白干
 // 比较时统一斜杠方向、去掉末尾斜杠，免得 E:/x 和 E:\x 被判成两个地方
 const normDir = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+// 左栏窄，目录只显示最后两级，够认出是哪台机器上的哪个项目；完整路径在鼠标悬停里
+function shortDir(p) {
+  const s = String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!s) return '';
+  const parts = s.split('/').filter(Boolean);
+  if (parts.length <= 2) return s;
+  const last2 = parts.slice(-2).join('/');
+  return '…/' + (last2.length <= 26 ? last2 : parts[parts.length - 1]);
+}
 function dirWarn(m) {
   const d = m.dir || m.workdir || '';
   if (!d || !(m.dirs || []).length) return '';
@@ -416,19 +867,36 @@ function dirWarn(m) {
 }
 function renderMachines() {
   const ms = state.machines;
-  $('#mcount').textContent = `${ms.filter(m => m.online).length} 台在线 / 共 ${ms.length} 台`;
+  $('#mcount').innerHTML = `<b style="color:var(--green)">${ms.filter(m => m.online).length}</b> 台在线 / 共 ${ms.length} 台`;
+  // 顶栏概览：在线几台、在跑几台
+  const so = $('#stOnline'), sb = $('#stBusy');
+  if (so) so.textContent = `${ms.filter(m => m.online).length}/${ms.length}`;
+  if (sb) sb.textContent = ms.filter(m => m.online && m.busy).length;
+  // 概览数字卡
+  const runN = state.tasks.filter(t => Object.values(t.runs || {}).some(r => ['queued','sent','running'].includes(r.status))).length;
+  const doneN = state.tasks.filter(t => Object.values(t.runs || {}).length && Object.values(t.runs).every(r => r.status === 'done')).length;
+  const waitN = state.tasks.filter(t => t.pending || t.waiting).length;
+  const setK = (id, v, unit) => { const el = $(id); if (el) el.innerHTML = `${v}${unit ? `<small> ${unit}</small>` : ''}`; };
+  setK('#kOnline', ms.filter(m => m.online).length, `/ ${ms.length} 台`);
+  setK('#kRun', ms.filter(m => m.online && m.busy).length, '台');
+  setK('#kDone', doneN, '件');
+  setK('#kWait', waitN, '件');
   $('#mlist').innerHTML = ms.length ? ms.map(m => {
     const cls = !m.online ? '' : m.idle ? 'on' : 'busy';
     const cpu = m.cpu != null ? ` · CPU ${m.cpu}%` : '';
     const st = !m.online ? '离线（' + fmtT(m.lastSeen) + '）' : (m.busy ? '在干活' : m.idle ? '空闲' : m.cpu >= 85 ? '电脑本身很忙，先不派' : '有活排着') + cpu;
     const warn = (m.online && !m.cli ? '<div class="meta" style="color:var(--red)">没找到 WorkBuddy 命令行，重跑一次加入命令</div>' : '')
       + (m.online && m.needsLogin ? '<div class="meta" style="color:var(--red)">命令行没登录：在这台电脑上打开一次 WorkBuddy（或运行 codebuddy 后输入 /login），登录好点右上角「升级连接程序」</div>'
-        : (m.online && m.agentsOk === false ? `<div class="meta" style="color:var(--amber)">连接程序 ${esc(m.agentVersion || '旧版')}：还不能指定专家/模型，点右上角「升级连接程序」</div>` : ''))
-      + (m.online && (m.experts || []).length ? `<div class="meta">专家 ${esc(m.experts.map(e => e.name).join('、'))}</div>` : '');
+        : (m.online && m.agentsOk === false ? `<div class="meta" style="color:var(--amber)">连接程序 ${esc(m.agentVersion || '旧版')}：还不能指定专家/模型，点右上角「升级连接程序」</div>` : ''));
+    const exs = (m.experts || []).map(e => e.name);
+    const exLine = exs.length
+      ? `<div class="one" title="${esc(exs.join('、'))}">专家 ${esc(exs.slice(0, 2).join('、'))}${exs.length > 2 ? ' 等 ' + exs.length + ' 个' : ''}</div>`
+      : '';
     return `<label class="m"><input type="checkbox" data-n="${esc(m.name)}" ${picked.has(m.name) ? 'checked' : ''} ${m.online ? '' : 'disabled'}>
-      <div><div class="nm"><span class="dot ${cls}"></span>${esc(m.name)}</div>
-      <div class="meta">${st} · ${esc(m.os)}</div>
-      <div class="meta">目录 ${esc(m.dir || m.workdir || '(这台没上报)')}${m.dirCustom ? ' <span class="chip">已改</span>' : ''} <a href="#" data-dir="${esc(m.name)}" title="改这台电脑以后默认在哪个文件夹干活">改</a>${dirWarn(m) ? `<div class="meta" style="color:var(--amber)">${esc(dirWarn(m))}</div>` : ''}</div>${warn}
+      <span class="mava"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+      <div style="min-width:0; flex:1"><div class="nm"><span class="dot ${cls}"></span>${esc(m.name)}</div>
+      <div class="one" title="${esc(st + ' · ' + m.os)}">${st} · ${esc(m.os)}</div>
+      <div class="one dline"><span class="dtxt" title="${esc((m.dirCustom ? '已手动改过 · ' : '') + (m.dir || m.workdir || ''))}">目录 ${esc(shortDir(m.dir || m.workdir) || '(这台没上报)')}</span><a href="#" data-dir="${esc(m.name)}" title="改这台电脑以后默认在哪个文件夹干活">改</a></div>${dirWarn(m) ? `<div class="meta" style="color:var(--amber)">${esc(dirWarn(m))}</div>` : ''}${warn}${exLine}
       ${m.online ? '' : `<a href="#" class="meta" data-del="${esc(m.name)}">移除</a>`}</div></label>`;
   }).join('') : '<div class="empty">还没有电脑连上来，点右上角「加电脑」。</div>';
   $('#mlist').querySelectorAll('input[data-n]').forEach(cb => cb.onchange = () => { cb.checked ? picked.add(cb.dataset.n) : picked.delete(cb.dataset.n); savePick(); renderTarget(); });
@@ -543,6 +1011,12 @@ function applyView() {
   a.style.display = VIEW === 'tasks' ? '' : 'none';
   b.style.display = VIEW === 'prompts' ? '' : 'none';
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.view === VIEW));
+  // 抬头跟着页面走：面包屑 + 标题 + 说明
+  const crumb = $('#crumbNow'), title = $('#pageTitle');
+  if (crumb) crumb.textContent = VIEW === 'prompts' ? '提示词' : '任务';
+  if (title) title.innerHTML = VIEW === 'prompts'
+    ? '提示词<span class="sub">发过的每一条都记在这儿，随时找回来再用</span>'
+    : '任务<span class="sub">指令交给空闲的电脑干，也能让每台都做一遍</span>';
 }
 function setView(v) {
   VIEW = v === 'prompts' ? 'prompts' : 'tasks';
@@ -648,21 +1122,33 @@ async function delPrompts(ids) {
 }
 
 function renderTasks() {
-  $('#tcount').textContent = state.tasks.length ? `共 ${state.tasks.length} 件${state.tasks.length >= 50 ? '（只显示最近 50 件）' : ''}` : '';
-  $('#tlist').innerHTML = state.tasks.length ? state.tasks.map(t => {
+  $('#tcount').innerHTML = state.tasks.length ? `共 <b>${state.tasks.length}</b> 件${state.tasks.length >= 50 ? '（只显示最近 50 件）' : ''}` : '';
+  const head = '<div class="tthead"><span></span><span>任务内容</span><span>执行情况</span><span>操作</span></div>';
+  $('#tlist').innerHTML = state.tasks.length ? head + state.tasks.map(t => {
     const runs = Object.entries(t.runs);
     const cnt = (s) => runs.filter(([, r]) => s.includes(r.status)).length;
     const line = t.mode === 'pool'
       ? `派给空闲的${t.pool.length ? '（限 ' + t.pool.map(esc).join('、') + '）' : ''}${t.after ? ' · 接力' : ''}`
       : `${runs.length} 台各做一遍：完成 ${cnt(['done'])}，在干 ${cnt(['sent','running','queued'])}，没成 ${cnt(['failed','stopped'])}`;
-    const chips = t.waiting ? '<span class="chip wait">等上一步做完</span>' : t.pending ? '<span class="chip wait">等空闲电脑</span>' : t.stopped && !runs.length ? `<span class="chip s-stopped">${esc(t.note || '已停')}</span>`
-      : runs.map(([n, r]) => `<span class="chip s-${r.status}">${esc(n)} ${ST[r.status] || r.status}</span>`).join('');
-    return `<div class="task ${t.id === selTask ? 'sel' : ''}" data-id="${t.id}">
-      <div class="thead"><input type="checkbox" class="tpick" data-tp="${t.id}" title="勾上，批量删" ${taskPicked.has(t.id) ? 'checked' : ''}>
-      <div class="p">${t.mode === 'pool' ? '<span class="chip p' + t.prio + '">' + ['紧急','重要','加大力度发展'][t.prio] + '</span> ' : ''}${t.src ? '<span class="chip">飞书表</span> ' : ''}${t.expert ? `<span class="chip">专家 ${esc(expertName(t.expert))}</span> ` : ''}${t.model ? `<span class="chip">模型 ${esc(t.model)}</span> ` : ''}${esc(t.prompt)}</div>
-      <button class="mini" data-copy="${t.id}" title="复制这条任务的文字">复制</button><button class="mini danger" data-del="${t.id}" title="删掉这件任务">删</button></div>
-      <div class="muted">${fmtT(t.createdAt)}${t.session ? ' · 接会话 ' + esc(String(t.session).slice(0, 8)) : ''} · ${line}</div>
-      <div class="chips">${chips}</div></div>`;
+    // 表格「执行情况」列只放一个总状态，明细双击看；机器多时列里堆十几行标签会很难看
+    const busyN = cnt(['queued', 'sent', 'running']), doneN = cnt(['done']), badN = cnt(['failed', 'stopped']);
+    let ov = { cls: 's-queued', txt: '待派' }, prog = '';
+    if (t.waiting) { ov = { cls: 's-queued', txt: '等上一步' }; }
+    else if (t.pending) { ov = { cls: 's-queued', txt: '排队中' }; }
+    else if (!runs.length) { ov = { cls: 's-stopped', txt: t.stopped ? '已停' : '待派' }; }
+    else if (busyN) { ov = { cls: 's-running', txt: badN ? '部分没成' : '进行中' }; prog = `${doneN + badN}/${runs.length}`; }
+    else if (badN) { ov = { cls: 's-failed', txt: '没成' }; prog = `${doneN}/${runs.length}`; }
+    else { ov = { cls: 's-done', txt: '完成' }; prog = `${runs.length}/${runs.length}`; }
+    const tags = (t.mode === 'pool' ? `<span class="chip p${t.prio}">${['紧急','重要','加大力度发展'][t.prio]}</span>` : '')
+      + (t.src ? '<span class="chip">飞书表</span>' : '')
+      + (t.expert ? `<span class="chip">专家 ${esc(expertName(t.expert))}</span>` : '')
+      + (t.model ? `<span class="chip">模型 ${esc(t.model)}</span>` : '');
+    return `<div class="task ${t.id === selTask ? 'sel' : ''}${taskPicked.has(t.id) ? ' pick' : ''}" data-id="${t.id}">
+      <input type="checkbox" class="tpick" data-tp="${t.id}" title="勾上，批量删" ${taskPicked.has(t.id) ? 'checked' : ''}>
+      <div class="tcell"><div class="p" title="${esc(t.prompt)}">${esc(t.prompt)}</div>
+        <div class="tmeta">${tags}<span class="muted">${fmtT(t.createdAt)}${t.session ? ' · 接会话 ' + esc(String(t.session).slice(0, 8)) : ''} · ${line}</span></div></div>
+      <div class="chips"><span class="chip ${ov.cls}" style="justify-content:center" title="${esc(runs.map(([n, r]) => n + ' ' + (ST[r.status] || r.status)).join('；') || '还没有电脑接手')}">${ov.txt}${prog ? ' ' + prog : ''}</span></div>
+      <div class="tact"><button class="mini" data-copy="${t.id}" title="复制这条任务的文字">复制</button><button class="mini danger" data-del="${t.id}" title="删掉这件任务">删</button></div></div>`;
   }).join('') : '<div class="empty">还没发过任务。</div>';
   $('#tlist').querySelectorAll('.task').forEach(el => el.onclick = () => { selTask = el.dataset.id; detail = null; renderTasks(); loadDetail(); });
   // 双击：直接把这件任务各台的执行结果弹出来（点按钮/勾选框时不弹）
@@ -769,22 +1255,22 @@ function paintResult() {
     .join(' · ');
   const blocks = runs.length ? runs.map(([n, r]) => {
     const txt = runResultText(r) || (busy.includes(r.status) ? '（还在干，等它出结果）' : '（没有输出）');
-    return `<div style="border-top:1px solid var(--line); padding-top:10px; margin-top:12px">
-      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px">
-        <b>${esc(n)}</b><span class="s-${r.status}">${ST[r.status] || r.status}</span>
+    return `<div class="rblk">
+      <div class="rhead"><b>${esc(n)}</b><span class="chip s-${r.status}">${ST[r.status] || r.status}</span>
         <span class="muted">${dur(r.startedAt, r.endedAt)}</span>
-        ${r.dir ? `<span class="muted">${esc(r.dir)}</span>` : ''}
+        ${r.dir ? `<span class="muted" title="${esc(r.dir)}">${esc(r.dir)}</span>` : ''}
         ${r.via === 'client' ? '<span class="chip">客户端跑的</span>' : r.via === 'cli' ? '<span class="chip">命令行跑的</span>' : ''}
         <button class="mini" data-rcopy="${esc(n)}" style="margin-left:auto">复制这台</button>
       </div>
-      <div style="white-space:pre-wrap; font-size:13px; line-height:1.65; ${r.status === 'failed' ? 'color:var(--red)' : ''}">${esc(txt)}</div>
+      <div class="rtext" style="${r.status === 'failed' ? 'color:var(--red)' : ''}">${esc(txt)}</div>
     </div>`;
   }).join('') : '<div class="empty" style="margin-top:10px">还没有电脑接手。</div>';
   box.innerHTML = `<h2 style="margin-top:0">执行结果 <span class="n">${meta}${live ? ' · <span style="color:var(--amber)">还在干</span>' : ''}</span>
       <button id="resClose" style="margin-left:auto">关</button></h2>
-    <div style="white-space:pre-wrap; background:#fafbfc; border:1px solid var(--line); border-radius:8px; padding:10px; font-size:13px; line-height:1.6; max-height:120px; overflow:auto">${esc(d.prompt)}</div>
+    <div class="rprompt">${esc(d.prompt)}</div>
     ${blocks}
-    <div class="row" style="margin-top:16px"><button id="resCopyAll" title="各台结果合成一段文字复制走">复制全部结果</button>
+    <div class="row" style="margin-top:18px; padding-top:14px; border-top:1px solid var(--line)">
+      <button class="primary" id="resCopyAll" title="各台结果合成一段文字复制走">复制全部结果</button>
       <span class="muted" style="font-size:12px">Esc 或点外面关掉${live ? '；在跑会自动刷新' : ''}</span></div>`;
   box.scrollTop = keep;
   $('#resClose').onclick = closeResult;
@@ -908,9 +1394,9 @@ async function renderSessList() {
     box.innerHTML = `<div class="empty">${sessAll.length ? '没有匹配的会话。' : '还没有可以接的会话：跑过至少一件活（并且连接程序在 1.10.0 以上）才会记下会话。'}</div>`;
     return;
   }
-  box.innerHTML = list.map((s, i) => `<div class="task" data-i="${i}" style="cursor:pointer">
-    <div class="thead"><div class="p"><span class="chip">${esc(s.machine)}</span> <span class="chip">${esc(s.session.slice(0, 8))}</span> ${s.via === 'client' ? '<span class="chip" title="命令行读不到客户端的会话库和登录态，接它会用上一轮结论开新会话">客户端跑的</span>' : s.via === 'cli' ? '<span class="chip" title="能真正续上上下文">命令行跑的</span>' : ''} ${esc(s.prompt) || '<span class="muted">（没有任务说明）</span>'}</div></div>
-    <div class="muted">${fmtT(s.at)}${s.dir ? ' · ' + esc(s.dir) : ''}${s.status ? ' · ' + (ST[s.status] || s.status) : ''}</div>
+  box.innerHTML = list.map((s, i) => `<div class="srow" data-i="${i}" style="cursor:pointer">
+    <div class="stitle"><span class="chip">${esc(s.machine)}</span> <span class="chip">${esc(s.session.slice(0, 8))}</span> ${s.via === 'client' ? '<span class="chip" title="命令行读不到客户端的会话库和登录态，接它会用上一轮结论开新会话">客户端跑的</span>' : s.via === 'cli' ? '<span class="chip" title="能真正续上上下文">命令行跑的</span>' : ''} <span class="stext">${esc(s.prompt) || '<span class="muted">（没有任务说明）</span>'}</span></div>
+    <div class="smeta">${fmtT(s.at)}${s.dir ? ' · ' + esc(s.dir) : ''}${s.status ? ' · ' + (ST[s.status] || s.status) : ''}</div>
   </div>`).join('');
   box.querySelectorAll('[data-i]').forEach((el) => el.onclick = () => {
     sessPicked = { ...list[+el.dataset.i] };

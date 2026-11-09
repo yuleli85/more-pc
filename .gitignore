@@ -21,3 +21,11 @@ Thumbs.db
 .git.bak-*/
 *.bak-*
 *.bak
+
+# 本地调试用临时文件（无头浏览器截图、CDP 驱动、测试数据目录）
+build/cdp.js
+build/shot.js
+build/tshot.js
+build/shots/
+build/steps*.json
+build/testdata-*/
