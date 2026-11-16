@@ -120,12 +120,19 @@ const PROMPT_MAX = 1000;   // 最多留最近 1000 条
 const PROMPT_TEXT_MAX = 20000; // 单条最长（跟任务的 prompt 上限一致）
 let promptsMigrated = false;   // 老版本升上来时补录过一次没有
 let needPromptMigrate = false;
+// scheds: 定时任务。到点自动按存好的配置发活，不用人工发
+// [{ id, name, prompt, mode, split, chain, prio, git, expert, model, workdir, targets,
+//    enabled, kind: daily|weekly|interval|once, at, days, everyMin, onceAt,
+//    lastRun, nextRun, lastTry, lastErr, lastOk, lastTaskIds, note, createdAt }]
+let scheds = [];
+const SCHED_MAX = 100; // 最多存 100 条定时任务
 const stateFile = path.join(DATA_DIR, 'state.json');
 try {
   const s = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
   tasks = s.tasks || [];
   machineDirs = s.machineDirs || {};
   prompts = s.prompts || [];
+  scheds = s.scheds || [];
   promptsMigrated = !!s.promptsMigrated;
   needPromptMigrate = !promptsMigrated && !prompts.length && tasks.length > 0;
   for (const m of s.machines || []) machines.set(m.name, { ...m, waiter: null, busy: null });
@@ -137,7 +144,7 @@ let saveTimer = null;
 function writeState() {
   const ms = [...machines.values()].map(({ waiter, busy, ...m }) => m);
   const tmp = stateFile + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ machines: ms, tasks: tasks.slice(-200), machineDirs, prompts: prompts.slice(-PROMPT_MAX), promptsMigrated }));
+  fs.writeFileSync(tmp, JSON.stringify({ machines: ms, tasks: tasks.slice(-200), machineDirs, prompts: prompts.slice(-PROMPT_MAX), scheds: scheds.slice(-SCHED_MAX), promptsMigrated }));
   fs.renameSync(tmp, stateFile);
 }
 // 删除这类「删了就不该复活」的操作直接落盘，不等防抖
@@ -509,6 +516,7 @@ const cleanName = (s) => String(s || '').trim().replace(/[\u0000-\u001f<>"'`\\]/
 const summary = (t) => ({
   id: t.id, prompt: t.prompt.slice(0, 200), createdAt: t.createdAt, cont: t.cont, workdir: t.workdir, session: t.session || '', sessionMachine: t.sessionMachine || '',
   mode: t.mode || 'all', pool: t.pool || [], prio: prioOf(t), src: t.src || '', stopped: !!t.stopped, pending: pending(t), waiting: waitingDep(t), note: t.note || '',
+  schedName: t.schedName || '', schedId: t.schedId || '',
   after: t.after || '', afterPrompt: t.after && byId(t.after) ? byId(t.after).prompt.slice(0, 60) : '', git: !!t.git,
   expert: t.expert || '', model: t.model || '',
   runs: Object.fromEntries(Object.entries(t.runs).map(([n, r]) => [n, { status: r.status, startedAt: r.startedAt, endedAt: r.endedAt, error: r.error, dir: r.dir || '', session: r.session || '', via: r.via || '', expertNote: r.expertNote || '', modelNote: r.modelNote || '', last: lastText(r) }])),
@@ -591,6 +599,188 @@ function dropStaleAutoUpgrade(n) {
     if (!t.auto || t.kind !== 'upgrade') continue;
     const r = t.runs[n];
     if (r && (r.status === 'failed' || r.status === 'stopped')) tasks.splice(i, 1);
+  }
+}
+
+// ---------- 发任务的公共入口 ----------
+// 网页「发出去」和定时到点都走这里：校验、落库、叫醒目标电脑。
+// 返回 { error } 或 { made, targets, warn }。b.schedId/schedName 有值时是定时任务发的。
+function makeTasks(b) {
+  const prompt = String(b.prompt || '').trim();
+  if (!prompt) return { error: '指令是空的' };
+  const mode0 = b.mode === 'all' ? 'all' : 'pool';
+  // 每行一件活：一次交一批，派给空闲的电脑分着干
+  const plist = b.split ? prompt.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).slice(0, 200) : [prompt];
+  const picked = Array.isArray(b.targets) ? [...new Set(b.targets.map(cleanName))].filter((n) => machines.has(n)) : [];
+  let targets = [];
+  if (mode0 === 'all') {
+    targets = picked.length ? picked : [...machines.values()].filter(online).map((m) => m.name);
+    if (!targets.length) return { error: '没有在线的电脑' };
+  } else if (!machines.size) return { error: '还没有电脑连上来' };
+  // 接力只在派给空闲的里用：after 接在某件后面；chain 每行接在上一行后面
+  const after = mode0 === 'pool' && b.after && byId(String(b.after)) ? String(b.after) : null;
+  // 指定专家/模型：确认至少有一台在线的电脑认得（连接程序要 1.7.0+）
+  const expert = cleanSpecial(b.expert);
+  const model = cleanSpecial(b.model);
+  if (String(b.expert || '').trim() && !expert) return { error: '专家名只能用字母、数字、点、下划线、冒号、短横线，且不能以短横线开头' };
+  if (String(b.model || '').trim() && !model) return { error: '模型名只能用字母、数字、点、下划线、冒号、短横线，且不能以短横线开头' };
+  // 指定专家/模型：能用原生就原生，用不了就降级（专家写进任务说明），不再拒单
+  let warn = '';
+  if (expert || model) {
+    const names = mode0 === 'all' ? targets : [...machines.values()].filter(online).map((m) => m.name);
+    const soft = names.filter((n) => {
+      const mm = machines.get(n); if (!mm) return false;
+      const noExpert = expert && (!agentSupports(mm) || !expertsFor(mm).some((e) => e.id === expert));
+      const noModel = model && !agentSupports(mm);
+      return noExpert || noModel;
+    });
+    if (soft.length) {
+      warn = `这些电脑会降级执行（专家写进任务说明顶上、模型用本机默认）：${soft.join('、')}。`
+        + '想原生加载就跑一次更新命令升级连接程序，升级后自动改成原生。';
+    }
+  }
+  // 接着某个会话做：会话只活在某一台电脑的某个目录里，所以机器和目录一起被锁死。
+  // 客户端任务表没有会话字段（写进去必然是全新会话），所以这类任务一律走命令行，
+  // 连接程序那边会拦掉客户端通道，这里只负责把会话信息连同机器、目录一起下发。
+  let mode = mode0, sessWanted = '', sessMachine = '', sessHome = '', sessCtx = '';
+  let lockedDir = String(b.workdir || '').trim().slice(0, 300);
+  const rawSess = String(b.session || '').trim();
+  if (rawSess) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(rawSess)) return { error: '会话 id 格式不对' };
+    if (b.split) return { error: '接会话时不能「每行算一件活」：同一个会话只能一条接一条做，否则两件活会抢同一个会话' };
+    const info = sessionInfo(rawSess);
+    const want = cleanName(b.sessionMachine || (info && info.machine) || '');
+    const mm = machines.get(want);
+    if (!want || !mm) return { error: '接会话必须指定是哪台电脑：会话只存在于那台上，换台电脑就接不上了' };
+    sessWanted = rawSess; sessMachine = want;
+    // 客户端建的会话存在 ~/.workbuddy 里，命令行建的在 ~/.codebuddy 里，两套不通用：
+    // 把来源一起带下去，连接程序才知道该让命令行去翻哪一套。
+    sessHome = (info && info.via) === 'client' ? 'client' : 'cli';
+    if (sessHome === 'client') sessCtx = (info && info.result) || '';
+    // 目录跟着会话走，不让改：在别的目录里续旧会话，等于上下文和文件对不上
+    if (info && info.dir) lockedDir = info.dir;
+    mode = 'all'; targets = [want];
+    if (!agentSessionSupports(mm)) {
+      warn += `「${want}」的连接程序是 ${mm.agentVersion || '旧版'}，还不支持接会话（这次会当成新会话跑）：点右上角「升级连接程序」升到 ${AGENT_SESSION_MIN} 后再试。`;
+    }
+  }
+  const made = [];
+  plist.forEach((pr, i) => {
+    const dep = mode === 'pool' && b.chain && i > 0 ? made[i - 1].id : after;
+    const t = { id: crypto.randomBytes(6).toString('hex'), mode, pool: mode === 'pool' ? picked : [], after: dep, git: !!b.git, prio: [0, 1, 2].includes(+b.prio) ? +b.prio : 1, prompt: pr.slice(0, 20000), cont: !!b.cont, session: sessWanted, sessionMachine: sessMachine, sessionHome: sessHome, sessionCtx: sessCtx, workdir: lockedDir, expert, model, schedId: b.schedId || '', schedName: b.schedName || '', createdAt: Date.now() + i, runs: {} };
+    for (const n of targets) t.runs[n] = { status: 'queued', items: [] };
+    tasks.push(t);
+    made.push(t);
+  });
+  if (tasks.length > 500) tasks.splice(0, tasks.length - 500);
+  for (const t of made) recordPrompt(t); // 提示词页：每次提交都留一份
+  save();
+  for (const n of targets) kick(n);
+  if (mode === 'pool') assignPending();
+  return { made, targets, warn };
+}
+
+// ---------- 定时任务 ----------
+// 到点自动发，不用人工盯着。四种频率：
+//   daily    每天 at（HH:MM）跑一次
+//   weekly   每周 days（1=一 … 7=日）的 at 跑
+//   interval 每隔 everyMin 分钟跑一次（首次从创建/上次跑开始算）
+//   once    到 onceAt 只跑一次
+function dayOfWeek(d) { const w = d.getDay(); return w === 0 ? 7 : w; } // 1=一 … 7=日
+function nextRunOf(s, from) {
+  const t = from || Date.now();
+  if (s.kind === 'interval') {
+    const step = Math.max(+s.everyMin || 0, 5) * 60000;
+    const anchor = +s.lastRun || +s.createdAt || t;
+    return anchor + Math.ceil(Math.max(t - anchor + 1, 1) / step) * step;
+  }
+  if (s.kind === 'once') return +s.onceAt > 0 ? +s.onceAt : 0;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s.at || ''));
+  if (!m) return 0;
+  const hh = Math.min(+m[1], 23), mm = Math.min(+m[2], 59);
+  const days = s.kind === 'weekly' ? [...new Set((s.days || []).map(Number).filter((d) => d >= 1 && d <= 7))].sort((a, b) => a - b) : [1];
+  if (!days.length) return 0;
+  const d = new Date(t);
+  d.setHours(hh, mm, 0, 0);
+  for (let i = 0; i < 62; i++) { // 最多找两个月，找不到（配置不对）就返回 0
+    if (d.getTime() > t && (s.kind !== 'weekly' || days.includes(dayOfWeek(d)))) return d.getTime();
+    d.setDate(d.getDate() + 1);
+    d.setHours(hh, mm, 0, 0);
+  }
+  return 0;
+}
+// 新建/编辑共用的校验，返回 { fields } 或 { error }
+function buildSched(b) {
+  const prompt = String(b.prompt || '').trim();
+  if (!prompt) return { error: '指令是空的' };
+  if (prompt.length > 20000) return { error: '指令太长了' };
+  const name = String(b.name || '').trim().slice(0, 60) || prompt.slice(0, 24);
+  const mode = b.mode === 'all' ? 'all' : 'pool';
+  const expert = cleanSpecial(b.expert), model = cleanSpecial(b.model);
+  if (String(b.expert || '').trim() && !expert) return { error: '专家名只能用字母、数字、点、下划线、冒号、短横线，且不能以短横线开头' };
+  if (String(b.model || '').trim() && !model) return { error: '模型名只能用字母、数字、点、下划线、冒号、短横线，且不能以短横线开头' };
+  const targets = Array.isArray(b.targets) ? [...new Set(b.targets.map(cleanName))].filter((n) => machines.has(n)) : [];
+  const kind = ['daily', 'weekly', 'interval', 'once'].includes(b.kind) ? b.kind : 'daily';
+  let at = '', days = [], everyMin = 0, onceAt = 0;
+  if (kind === 'daily' || kind === 'weekly') {
+    at = String(b.at || '').trim();
+    if (!/^\d{1,2}:\d{2}$/.test(at)) return { error: '跑的时间要写成 HH:MM（24 小时制），例如 09:30' };
+    if (kind === 'weekly') {
+      days = [...new Set((Array.isArray(b.days) ? b.days : []).map(Number).filter((d) => d >= 1 && d <= 7))].sort((a, b) => a - b);
+      if (!days.length) return { error: '每周跑要至少勾一个星期几' };
+    }
+  } else if (kind === 'interval') {
+    everyMin = Math.round(+b.everyMin || 0);
+    if (!(everyMin >= 5)) return { error: '间隔至少 5 分钟' };
+    if (everyMin > 60 * 24 * 31) return { error: '间隔不能超过一个月' };
+  } else {
+    onceAt = Math.round(+b.onceAt || 0);
+    if (!(onceAt > Date.now() + 30000)) return { error: '只跑一次的时间必须是 30 秒以后的' };
+  }
+  return { fields: {
+    name, prompt: prompt.slice(0, 20000), mode, split: !!b.split, chain: !!b.chain,
+    prio: [0, 1, 2].includes(+b.prio) ? +b.prio : 1, git: !!b.git, expert, model,
+    workdir: String(b.workdir || '').trim().slice(0, 300), targets, kind, at, days, everyMin, onceAt,
+  } };
+}
+// 照定时任务存好的配置发一次活，把结果记在任务上（自动到点和手动「立即跑」都用）
+function fireSched(s) {
+  const r = makeTasks({ prompt: s.prompt, mode: s.mode, split: s.split, chain: s.chain, prio: s.prio, git: s.git, expert: s.expert || '', model: s.model || '', workdir: s.workdir || '', targets: s.targets || [], schedId: s.id, schedName: s.name });
+  s.lastTry = Date.now();
+  s.lastOk = !r.error;
+  s.lastErr = r.error || '';
+  s.lastTaskIds = r.error ? [] : r.made.map((t) => t.id);
+  return r;
+}
+// 20 秒巡一圈：到点的发出去，发完算下一次。nextRun 会随状态存盘，重启不会重复发同一档。
+function schedTick() {
+  const now = Date.now();
+  let dirty = false;
+  for (const s of scheds) {
+    if (!s.enabled) continue;
+    if (!s.nextRun) s.nextRun = nextRunOf(s, now);
+    if (s.nextRun > now) continue;
+    fireSched(s);
+    s.lastRun = now;
+    if (s.kind === 'once') { s.enabled = false; s.nextRun = 0; s.note = '到点跑过了'; }
+    else {
+      const nx = nextRunOf(s, now);
+      if (!nx || nx <= now) { s.enabled = false; s.nextRun = 0; s.note = '时间配置不对，已自动停用，改好再启用'; }
+      else s.nextRun = nx;
+    }
+    dirty = true;
+  }
+  if (dirty) saveNow(); // 立刻落盘：发了活还只挂在防抖上，重启会重复发一次
+}
+setInterval(schedTick, 20000).unref();
+// 启动时把过期的档口顺一遍：循环的跳过错过的（不补发，免得一开机刷屏），
+// 只跑一次的错过了就标停用
+for (const s of scheds) {
+  if (!s.enabled) continue;
+  if (s.kind === 'once') {
+    if (s.nextRun && s.nextRun <= Date.now()) { s.enabled = false; s.nextRun = 0; s.note = '到点时总控没开机，错过了'; }
+  } else if (!s.nextRun || s.nextRun <= Date.now()) {
+    s.nextRun = nextRunOf(s, Date.now());
   }
 }
 
@@ -808,80 +998,75 @@ const server = http.createServer(async (req, res) => {
       if (!x) return send(res, 404, { error: '没有这条提示词' });
       return send(res, 200, x);
     }
+    // ----- 定时任务 -----
+    if (p === '/api/scheds' && req.method === 'GET') {
+      return send(res, 200, { scheds: scheds.map((s) => ({ ...s })) });
+    }
+    if (p === '/api/scheds' && req.method === 'POST') {
+      const b = await readBody(req);
+      const r = buildSched(b);
+      if (r.error) return send(res, 400, { error: r.error });
+      const s = { id: crypto.randomBytes(6).toString('hex'), ...r.fields, enabled: b.enabled === false ? false : true, lastRun: 0, nextRun: 0, lastTry: 0, lastOk: false, lastErr: '', lastTaskIds: [], note: '', createdAt: Date.now() };
+      if (s.enabled) {
+        s.nextRun = nextRunOf(s, Date.now());
+        if (!s.nextRun) return send(res, 400, { error: '这个时间算不出下一次要跑的时刻，改一下再试' });
+      }
+      scheds.push(s);
+      if (scheds.length > SCHED_MAX) scheds.splice(0, scheds.length - SCHED_MAX);
+      saveNow();
+      return send(res, 200, { ok: true, sched: s });
+    }
+    if (p === '/api/scheds/update' && req.method === 'POST') {
+      const b = await readBody(req);
+      const s = scheds.find((x) => x.id === String(b.id || ''));
+      if (!s) return send(res, 404, { error: '没有这条定时任务' });
+      // 只切换启停（列表上的开关）
+      if (b.enabled === true || b.enabled === false) {
+        s.enabled = b.enabled;
+        s.note = '';
+        if (s.enabled) {
+          s.nextRun = nextRunOf(s, Date.now());
+          if (!s.nextRun) { s.enabled = false; return send(res, 400, { error: '这个时间算不出下一次要跑的时刻，改一下再试', sched: s }); }
+        } else s.nextRun = 0;
+        saveNow();
+        return send(res, 200, { ok: true, sched: s });
+      }
+      // 整体编辑：校验后覆盖，再重算下一次
+      const r = buildSched(b);
+      if (r.error) return send(res, 400, { error: r.error });
+      Object.assign(s, r.fields);
+      s.note = '';
+      s.nextRun = nextRunOf(s, Date.now());
+      if (!s.nextRun) { s.enabled = false; s.nextRun = 0; saveNow(); return send(res, 400, { error: '这个时间算不出下一次要跑的时刻', sched: s }); }
+      saveNow();
+      return send(res, 200, { ok: true, sched: s });
+    }
+    if (p === '/api/scheds/delete' && req.method === 'POST') {
+      const b = await readBody(req);
+      const ids = Array.isArray(b.ids) ? b.ids.map(String) : (b.id ? [String(b.id)] : []);
+      if (!ids.length) return send(res, 400, { error: '没说删哪条' });
+      const set = new Set(ids);
+      const before = scheds.length;
+      scheds = scheds.filter((x) => !set.has(x.id));
+      saveNow();
+      if (before === scheds.length) return send(res, 404, { error: '这些定时任务已经没了' });
+      return send(res, 200, { ok: true, removed: before - scheds.length });
+    }
+    // 立即手动跑一次：不影响周期（不动 lastRun / nextRun），结果记在 lastTry / lastErr / lastTaskIds 上
+    if (p === '/api/scheds/run' && req.method === 'POST') {
+      const b = await readBody(req);
+      const s = scheds.find((x) => x.id === String(b.id || ''));
+      if (!s) return send(res, 404, { error: '没有这条定时任务' });
+      const r = fireSched(s);
+      if (r.error) { saveNow(); return send(res, 400, { error: r.error, sched: s }); }
+      saveNow();
+      return send(res, 200, { ok: true, ids: r.made.map((t) => t.id), warn: r.warn, sched: s });
+    }
     if (p === '/api/tasks' && req.method === 'POST') {
       const b = await readBody(req);
-      const prompt = String(b.prompt || '').trim();
-      if (!prompt) return send(res, 400, { error: '指令是空的' });
-      const mode0 = b.mode === 'all' ? 'all' : 'pool';
-      // 每行一件活：一次交一批，派给空闲的电脑分着干
-      const prompts = b.split ? prompt.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).slice(0, 200) : [prompt];
-      const picked = Array.isArray(b.targets) ? [...new Set(b.targets.map(cleanName))].filter((n) => machines.has(n)) : [];
-      let targets = [];
-      if (mode0 === 'all') {
-        targets = picked.length ? picked : [...machines.values()].filter(online).map((m) => m.name);
-        if (!targets.length) return send(res, 400, { error: '没有在线的电脑' });
-      } else if (!machines.size) return send(res, 400, { error: '还没有电脑连上来' });
-      // 接力只在派给空闲的里用：after 接在某件后面；chain 每行接在上一行后面
-      const after = mode0 === 'pool' && b.after && byId(String(b.after)) ? String(b.after) : null;
-      // 指定专家/模型：确认至少有一台在线的电脑认得（连接程序要 1.7.0+）
-      const expert = cleanSpecial(b.expert);
-      const model = cleanSpecial(b.model);
-      if (String(b.expert || '').trim() && !expert) return send(res, 400, { error: '专家名只能用字母、数字、点、下划线、冒号、短横线，且不能以短横线开头' });
-      if (String(b.model || '').trim() && !model) return send(res, 400, { error: '模型名只能用字母、数字、点、下划线、冒号、短横线，且不能以短横线开头' });
-      // 指定专家/模型：能用原生就原生，用不了就降级（专家写进任务说明），不再拒单
-      let warn = '';
-      if (expert || model) {
-        const names = mode0 === 'all' ? targets : [...machines.values()].filter(online).map((m) => m.name);
-        const soft = names.filter((n) => {
-          const mm = machines.get(n); if (!mm) return false;
-          const noExpert = expert && (!agentSupports(mm) || !expertsFor(mm).some((e) => e.id === expert));
-          const noModel = model && !agentSupports(mm);
-          return noExpert || noModel;
-        });
-        if (soft.length) {
-          warn = `这些电脑会降级执行（专家写进任务说明顶上、模型用本机默认）：${soft.join('、')}。`
-            + '想原生加载就跑一次更新命令升级连接程序，升级后自动改成原生。';
-        }
-      }
-      // 接着某个会话做：会话只活在某一台电脑的某个目录里，所以机器和目录一起被锁死。
-      // 客户端任务表没有会话字段（写进去必然是全新会话），所以这类任务一律走命令行，
-      // 连接程序那边会拦掉客户端通道，这里只负责把会话信息连同机器、目录一起下发。
-      let mode = mode0, sessWanted = '', sessMachine = '', sessHome = '', sessCtx = '';
-      let lockedDir = String(b.workdir || '').trim().slice(0, 300);
-      const rawSess = String(b.session || '').trim();
-      if (rawSess) {
-        if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(rawSess)) return send(res, 400, { error: '会话 id 格式不对' });
-        if (b.split) return send(res, 400, { error: '接会话时不能「每行算一件活」：同一个会话只能一条接一条做，否则两件活会抢同一个会话' });
-        const info = sessionInfo(rawSess);
-        const want = cleanName(b.sessionMachine || (info && info.machine) || '');
-        const mm = machines.get(want);
-        if (!want || !mm) return send(res, 400, { error: '接会话必须指定是哪台电脑：会话只存在于那台上，换台电脑就接不上了' });
-        sessWanted = rawSess; sessMachine = want;
-        // 客户端建的会话存在 ~/.workbuddy 里，命令行建的在 ~/.codebuddy 里，两套不通用：
-        // 把来源一起带下去，连接程序才知道该让命令行去翻哪一套。
-        sessHome = (info && info.via) === 'client' ? 'client' : 'cli';
-        if (sessHome === 'client') sessCtx = (info && info.result) || '';
-        // 目录跟着会话走，不让改：在别的目录里续旧会话，等于上下文和文件对不上
-        if (info && info.dir) lockedDir = info.dir;
-        mode = 'all'; targets = [want];
-        if (!agentSessionSupports(mm)) {
-          warn += `「${want}」的连接程序是 ${mm.agentVersion || '旧版'}，还不支持接会话（这次会当成新会话跑）：点右上角「升级连接程序」升到 ${AGENT_SESSION_MIN} 后再试。`;
-        }
-      }
-      const made = [];
-      prompts.forEach((pr, i) => {
-        const dep = mode === 'pool' && b.chain && i > 0 ? made[i - 1].id : after;
-        const t = { id: crypto.randomBytes(6).toString('hex'), mode, pool: mode === 'pool' ? picked : [], after: dep, git: !!b.git, prio: [0, 1, 2].includes(+b.prio) ? +b.prio : 1, prompt: pr.slice(0, 20000), cont: !!b.cont, session: sessWanted, sessionMachine: sessMachine, sessionHome: sessHome, sessionCtx: sessCtx, workdir: lockedDir, expert, model, createdAt: Date.now() + i, runs: {} };
-        for (const n of targets) t.runs[n] = { status: 'queued', items: [] };
-        tasks.push(t);
-        made.push(t);
-      });
-      if (tasks.length > 500) tasks.splice(0, tasks.length - 500);
-      for (const t of made) recordPrompt(t); // 提示词页：每次提交都留一份
-      save();
-      for (const n of targets) kick(n);
-      if (mode === 'pool') assignPending();
-      return send(res, 200, { ...summary(made[0]), ids: made.map((t) => t.id), warn });
+      const r = makeTasks(b);
+      if (r.error) return send(res, 400, { error: r.error });
+      return send(res, 200, { ...summary(r.made[0]), ids: r.made.map((t) => t.id), warn: r.warn });
     }
     let mt = p.match(/^\/api\/tasks\/([a-f0-9]+)$/);
     if (mt && req.method === 'GET') {

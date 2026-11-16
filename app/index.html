@@ -555,6 +555,7 @@ function shell() {
       <nav class="tabs">
         <button class="on" data-view="tasks"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>任务</button>
         <button data-view="prompts"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>提示词</button>
+        <button data-view="scheds"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>定时</button>
       </nav>
       <div class="side-foot"><div><b>多机协同</b></div><div>指令交给空闲的电脑干</div></div>
     </aside>
@@ -676,10 +677,75 @@ function shell() {
           </div>
         </section>
       </main>
+      <main id="viewScheds" style="display:none">
+        <section>
+          <div class="card">
+            <h2>定时任务 <span class="n" id="scount"></span>
+              <span class="tbar"><button class="primary" id="sNew">新建定时任务</button></span></h2>
+            <p class="muted">到点自动按存好的配置发活，不用人工盯。没发出去会在这里说明原因；也可以随时「立即跑一次」试效果。</p>
+            <div id="slist"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+  <div id="schedModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.42); z-index:65; align-items:center; justify-content:center">
+    <div class="card" style="width:min(820px,94vw); max-height:88vh; overflow:auto; margin:0">
+      <h2 style="margin-top:0" id="schedTitle">新建定时任务<button id="schedClose" style="margin-left:auto">关</button></h2>
+      <div class="frow"><span class="flab">名称</span>
+        <div class="fctl"><input type="text" id="scName" placeholder="例如：每天早上整理一次下载目录（不填就用指令开头）" style="width:360px; max-width:100%"></div></div>
+      <div class="frow"><span class="flab">什么时候跑</span>
+        <div class="fctl">
+          <select id="scKind">
+            <option value="daily">每天固定时间</option>
+            <option value="weekly">每周固定几天</option>
+            <option value="interval">每隔一段时间</option>
+            <option value="once">到点只跑一次</option>
+          </select>
+          <span id="scAtWrap"><input type="time" id="scAt" value="09:00"> <span class="muted">（24 小时制）</span></span>
+          <span id="scDaysWrap" style="display:none">
+            <label class="muted"><input type="checkbox" class="scday" value="1">一</label>
+            <label class="muted"><input type="checkbox" class="scday" value="2">二</label>
+            <label class="muted"><input type="checkbox" class="scday" value="3">三</label>
+            <label class="muted"><input type="checkbox" class="scday" value="4">四</label>
+            <label class="muted"><input type="checkbox" class="scday" value="5">五</label>
+            <label class="muted"><input type="checkbox" class="scday" value="6">六</label>
+            <label class="muted"><input type="checkbox" class="scday" value="7">日</label>
+          </span>
+          <span id="scEveryWrap" style="display:none"><input type="number" id="scEvery" value="2" min="1" style="width:90px">
+            <select id="scUnit"><option value="60">小时</option><option value="1">分钟</option></select></span>
+          <span id="scOnceWrap" style="display:none"><input type="datetime-local" id="scOnce"></span>
+        </div></div>
+      <div class="frow"><span class="flab">派活方式</span>
+        <div class="fctl">
+          <span class="seg"><label><input type="radio" name="scMode" value="pool" checked>派给空闲的电脑</label><label><input type="radio" name="scMode" value="all">每台都做一遍</label></span>
+          <label class="muted"><input type="checkbox" id="scSplit"> 每行算一件活</label>
+          <label class="muted" title="后一行等前一行做完，带上它的结果接着干，优先交给做前一行的那台，不用同步文件"><input type="checkbox" id="scChain"> 按行接力</label>
+          <label class="muted" title="等电脑的活先派紧急的，再派重要的，最后派加大力度发展的">优先级 <select id="scPrio"><option value="0">紧急</option><option value="1" selected>重要</option><option value="2">加大力度发展</option></select></label>
+          <label class="muted" title="连接程序自动做：开工前先拉最新代码，做完自动提交并推送；冲突或推送失败会标成没做成"><input type="checkbox" id="scGit"> 代码用 Git 同步</label>
+        </div></div>
+      <div class="frow"><span class="flab">目标电脑</span>
+        <div class="fctl">
+          <div id="scTargets" class="chips" style="width:100%"></div>
+          <span class="muted" style="width:100%">「派给空闲的」只在勾选的电脑里找空闲的；「每台都做一遍」不勾＝到点所有在线的都做。不勾＝全部电脑。</span>
+        </div></div>
+      <div class="frow"><span class="flab">专家 / 模型</span>
+        <div class="fctl">
+          <select id="scExpert" style="flex:1 1 220px; min-width:0" title="让某台电脑用指定的专家干活（WorkBuddy 里的专家包，例如高级开发工程师）"></select>
+          <select id="scModel" style="flex:1 1 200px; min-width:0" title="指定这活用的模型；不填就用那台电脑自己的默认模型"></select>
+        </div></div>
+      <div class="frow"><span class="flab">任务说明</span>
+        <div class="fctl col"><textarea id="scPrompt" placeholder="到点自动发出去的指令，跟「发一条件活」里写的一样，也可以一行一件活"></textarea></div></div>
+      <div class="frow" style="border-bottom:0; padding-bottom:0"><span class="flab">执行目录</span>
+        <div class="fctl"><input type="text" id="scWorkdir" style="width:300px" title="可填绝对路径；只填文件夹名会放在那台电脑的默认目录下；不填就用默认目录" placeholder="不填就用该机默认目录"></div></div>
+      <div class="cfoot">
+        <span class="muted" id="scHint"></span>
+        <button class="primary" id="scSave">保存</button>
+      </div>
     </div>
   </div>`;
   // 毛玻璃卡片会变成 position:fixed 的定位参照，弹层必须挪到 body 下，否则会跟着卡片偏移
-  for (const id of ['sessModal', 'resModal']) { const el = $('#' + id); if (el && el.parentElement !== document.body) document.body.appendChild(el); }
+  for (const id of ['sessModal', 'resModal', 'schedModal']) { const el = $('#' + id); if (el && el.parentElement !== document.body) document.body.appendChild(el); }
   $('#sendBtn').onclick = sendTask;
   // 会话：默认新会话；选了一条旧会话就接着它的上下文做
   $('#sessPick').onclick = openSessModal;
@@ -706,6 +772,14 @@ function shell() {
   $('#pReload').onclick = () => loadPrompts();
   $('#pDel').onclick = () => delPrompts([...promptPicked]);
   $('#pSearch').oninput = (e) => { promptQ = e.target.value.trim(); renderPrompts(); };
+  // 定时任务页
+  $('#sNew').onclick = () => openSchedForm(null);
+  $('#schedClose').onclick = () => { $('#schedModal').style.display = 'none'; };
+  $('#schedModal').onclick = (e) => { if (e.target.id === 'schedModal') $('#schedModal').style.display = 'none'; };
+  $('#scKind').onchange = schedKindUI;
+  $('#scSplit').onchange = () => { if (!$('#scSplit').checked) $('#scChain').checked = false; };
+  $('#scChain').onchange = () => { if ($('#scChain').checked) $('#scSplit').checked = true; };
+  $('#scSave').onclick = saveSched;
   $('#addBtn').onclick = () => { const c = $('#joinCard'); c.style.display = c.style.display === 'none' ? '' : 'none'; renderJoin(); };
   $('#logoutBtn').onclick = async () => {
     if (!confirm('退出登录？下次要重新输口令。')) return;
@@ -1006,24 +1080,188 @@ async function delTasks(ids) {
 
 // ---------- 提示词页 ----------
 function applyView() {
-  const a = $('#viewTasks'), b = $('#viewPrompts');
-  if (!a || !b) return;
+  const a = $('#viewTasks'), b = $('#viewPrompts'), c = $('#viewScheds');
+  if (!a || !b || !c) return;
   a.style.display = VIEW === 'tasks' ? '' : 'none';
   b.style.display = VIEW === 'prompts' ? '' : 'none';
+  c.style.display = VIEW === 'scheds' ? '' : 'none';
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.view === VIEW));
   // 抬头跟着页面走：面包屑 + 标题 + 说明
+  const heads = {
+    tasks: ['任务', '任务<span class="sub">指令交给空闲的电脑干，也能让每台都做一遍</span>'],
+    prompts: ['提示词', '提示词<span class="sub">发过的每一条都记在这儿，随时找回来再用</span>'],
+    scheds: ['定时任务', '定时任务<span class="sub">到点自动发，不用人工盯着；没发出去会说明原因</span>'],
+  };
+  const h = heads[VIEW] || heads.tasks;
   const crumb = $('#crumbNow'), title = $('#pageTitle');
-  if (crumb) crumb.textContent = VIEW === 'prompts' ? '提示词' : '任务';
-  if (title) title.innerHTML = VIEW === 'prompts'
-    ? '提示词<span class="sub">发过的每一条都记在这儿，随时找回来再用</span>'
-    : '任务<span class="sub">指令交给空闲的电脑干，也能让每台都做一遍</span>';
+  if (crumb) crumb.textContent = h[0];
+  if (title) title.innerHTML = h[1];
 }
 function setView(v) {
-  VIEW = v === 'prompts' ? 'prompts' : 'tasks';
-  const want = VIEW === 'prompts' ? '#prompts' : '#tasks';
+  VIEW = ['prompts', 'scheds'].includes(v) ? v : 'tasks';
+  const want = '#' + VIEW;
   if (location.hash !== want) { try { history.replaceState(null, '', want); } catch { location.hash = want; } }
   applyView();
   if (VIEW === 'prompts') loadPrompts();
+  if (VIEW === 'scheds') loadScheds();
+}
+// ---------- 定时任务页 ----------
+let schedList = [], schedEditing = null; // schedEditing：正在编辑的那条（null=新建）
+async function loadScheds() {
+  if (!$('#slist')) return;
+  try {
+    const r = await api('/api/scheds');
+    schedList = r.scheds || [];
+    renderScheds();
+  } catch (e) {
+    if (e.message !== '401') $('#slist').innerHTML = `<div class="empty">没拉到：${esc(e.message)}</div>`;
+  }
+}
+function schedFreqTxt(s) {
+  if (s.kind === 'daily') return `每天 ${s.at}`;
+  if (s.kind === 'weekly') return `每周${(s.days || []).map(d => '一二三四五六日'[d - 1]).join('、')} ${s.at}`;
+  if (s.kind === 'interval') {
+    const m = +s.everyMin || 0;
+    return m >= 60 && m % 60 === 0 ? `每 ${m / 60} 小时` : `每 ${m} 分钟`;
+  }
+  return `只跑一次 ${fmtT(s.onceAt)}`;
+}
+function schedStatusTxt(s) {
+  if (!s.enabled) return `<span class="chip s-stopped">${esc(s.note || '已停用')}</span>`;
+  return s.nextRun ? `<span class="chip wait" title="${fmtT(s.nextRun)}">下次 ${fmtT(s.nextRun)}</span>` : '';
+}
+function schedLastTxt(s) {
+  if (!s.lastTry) return '<span class="muted">还没跑过</span>';
+  const when = fmtT(s.lastTry);
+  if (s.lastOk && (s.lastTaskIds || []).length) {
+    return `<span class="muted">${when} 已发</span> <button class="mini" data-sres="${s.lastTaskIds[0]}" title="直接弹出这一批的执行结果">看结果</button>`;
+  }
+  return `<span style="color:var(--red)" title="${esc(s.lastErr || '')}">${when} 没发出去：${esc(s.lastErr || '原因不明')}</span>`;
+}
+function renderScheds() {
+  const box = $('#slist');
+  if (!box) return;
+  $('#scount').textContent = schedList.length ? `共 ${schedList.length} 条` : '';
+  if (!schedList.length) { box.innerHTML = '<div class="empty">还没有定时任务。点「新建定时任务」，到点自动发，不用每天手动来。</div>'; return; }
+  box.innerHTML = schedList.map(s => {
+    const chips = [
+      `<span class="chip">${esc(schedFreqTxt(s))}</span>`,
+      `<span class="chip">${s.mode === 'pool' ? '派给空闲的' : (s.targets || []).length ? `${s.targets.length} 台各做一遍` : '每台在线的都做'}</span>`,
+      (s.targets || []).length && s.mode === 'pool' ? `<span class="chip" title="${esc(s.targets.join('、'))}">只给勾的 ${s.targets.length} 台</span>` : '',
+      s.expert ? `<span class="chip">专家 ${esc(expertName(s.expert))}</span>` : '',
+      s.model ? `<span class="chip">模型 ${esc(s.model)}</span>` : '',
+      s.git ? '<span class="chip">Git 同步</span>' : '',
+      s.workdir ? `<span class="chip" title="${esc(s.workdir)}">目录 ${esc(s.workdir)}</span>` : '',
+      s.split ? '<span class="chip">每行一件活</span>' : '',
+      s.chain ? '<span class="chip">按行接力</span>' : '',
+    ].filter(Boolean).join(' ');
+    return `<div class="pm" data-id="${s.id}">
+      <div class="pmh">
+        <b>${esc(s.name)}</b>
+        ${schedStatusTxt(s)}
+        <span class="meta">${schedLastTxt(s)}</span>
+        <button class="mini ok" data-srun="${s.id}" title="现在就照这条配置发一次活，不影响定时周期">立即跑一次</button>
+        <button class="mini" data-sedit="${s.id}">改</button>
+        <button class="mini" data-stoggle="${s.id}">${s.enabled ? '停用' : '启用'}</button>
+        <button class="mini danger" data-sdel="${s.id}">删</button>
+      </div>
+      <div class="ptext clamp">${esc(s.prompt)}</div>
+      <div class="chips" style="margin-top:4px">${chips}</div>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-srun]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const r = await api('/api/scheds/run', { method: 'POST', body: JSON.stringify({ id: b.dataset.srun }) });
+      flash(b);
+      if (r.warn) alert(r.warn);
+      await loadScheds();
+    } catch (e) { b.disabled = false; alert('没发出去：' + e.message); }
+  });
+  box.querySelectorAll('[data-sedit]').forEach(b => b.onclick = () => openSchedForm(schedList.find(x => x.id === b.dataset.sedit)));
+  box.querySelectorAll('[data-stoggle]').forEach(b => b.onclick = async () => {
+    const s = schedList.find(x => x.id === b.dataset.stoggle);
+    if (!s) return;
+    try {
+      await api('/api/scheds/update', { method: 'POST', body: JSON.stringify({ id: s.id, enabled: !s.enabled }) });
+      await loadScheds();
+    } catch (e) { alert('没改成：' + e.message); }
+  });
+  box.querySelectorAll('[data-sdel]').forEach(b => b.onclick = async () => {
+    const s = schedList.find(x => x.id === b.dataset.sdel);
+    if (!s) return;
+    if (!confirm(`删掉定时任务「${s.name}」？到点就不会再发了；已经发出去的任务不受影响。`)) return;
+    try { await api('/api/scheds/delete', { method: 'POST', body: JSON.stringify({ ids: [s.id] }) }); await loadScheds(); }
+    catch (e) { alert('没删掉：' + e.message); }
+  });
+  box.querySelectorAll('[data-sres]').forEach(b => b.onclick = () => openResult(b.dataset.sres));
+}
+// 弹窗里的频率控件跟着类型走
+function schedKindUI() {
+  const k = $('#scKind').value;
+  $('#scAtWrap').style.display = k === 'daily' || k === 'weekly' ? '' : 'none';
+  $('#scDaysWrap').style.display = k === 'weekly' ? '' : 'none';
+  $('#scEveryWrap').style.display = k === 'interval' ? '' : 'none';
+  $('#scOnceWrap').style.display = k === 'once' ? '' : 'none';
+}
+function openSchedForm(s) {
+  schedEditing = s || null;
+  $('#schedTitle').innerHTML = `${s ? '改定时任务' : '新建定时任务'}<button id="schedClose" style="margin-left:auto">关</button>`;
+  $('#schedClose').onclick = () => { $('#schedModal').style.display = 'none'; };
+  $('#scName').value = s ? s.name : '';
+  $('#scPrompt').value = s ? s.prompt : '';
+  $('#scKind').value = s ? s.kind : 'daily';
+  $('#scAt').value = s && s.at ? s.at : '09:00';
+  document.querySelectorAll('.scday').forEach(c => c.checked = !!(s && (s.days || []).includes(+c.value)));
+  $('#scEvery').value = s && s.everyMin ? (s.everyMin % 60 === 0 ? s.everyMin / 60 : s.everyMin) : 2;
+  $('#scUnit').value = s && s.everyMin && s.everyMin % 60 === 0 ? '60' : (s && s.everyMin ? '1' : '60');
+  const once = $('#scOnce');
+  if (s && s.onceAt) { const d = new Date(s.onceAt); once.value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
+  else once.value = '';
+  document.querySelectorAll('input[name=scMode]').forEach(r => r.checked = (r.value === (s ? s.mode : 'pool')));
+  $('#scSplit').checked = !!(s && s.split);
+  $('#scChain').checked = !!(s && s.chain);
+  $('#scPrio').value = s ? String(s.prio) : '1';
+  $('#scGit').checked = !!(s && s.git);
+  $('#scWorkdir').value = s ? (s.workdir || '') : '';
+  // 专家 / 模型：跟主表单共用一份下拉数据
+  const exs = (state.meta && state.meta.experts) || [], mds = (state.meta && state.meta.models) || [];
+  $('#scExpert').innerHTML = '<option value="">不指定（用那台电脑自己的默认）</option>' + exs.map(e => `<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('');
+  $('#scModel').innerHTML = mds.map(m => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('');
+  if (s) { if (s.expert) $('#scExpert').value = s.expert; if (s.model) $('#scModel').value = s.model; }
+  // 目标电脑
+  const st = new Set(s ? (s.targets || []) : []);
+  $('#scTargets').innerHTML = state.machines.map(m =>
+    `<label class="muted" style="margin-right:10px"><input type="checkbox" class="sctg" value="${esc(m.name)}" ${st.has(m.name) ? 'checked' : ''} ${m.online ? '' : 'disabled'}> ${esc(m.name)}${m.online ? '' : '（离线）'}</label>`).join('')
+    || '<span class="muted">还没有电脑连上来；等有了再勾。</span>';
+  $('#scHint').textContent = s && s.note ? s.note : '';
+  schedKindUI();
+  $('#schedModal').style.display = 'flex';
+}
+async function saveSched() {
+  const b = {
+    name: $('#scName').value.trim(),
+    prompt: $('#scPrompt').value.trim(),
+    kind: $('#scKind').value,
+    at: $('#scAt').value || '',
+    days: [...document.querySelectorAll('.scday:checked')].map(c => +c.value),
+    everyMin: Math.round((+$('#scEvery').value || 0) * (+$('#scUnit').value || 1)),
+    onceAt: $('#scOnce').value ? new Date($('#scOnce').value).getTime() : 0,
+    mode: (document.querySelector('input[name=scMode]:checked') || {}).value || 'pool',
+    split: $('#scSplit').checked, chain: $('#scChain').checked,
+    prio: +$('#scPrio').value, git: $('#scGit').checked,
+    expert: $('#scExpert').value, model: $('#scModel').value,
+    workdir: $('#scWorkdir').value.trim(),
+    targets: [...document.querySelectorAll('.sctg:checked')].map(c => c.value),
+  };
+  if (schedEditing) b.id = schedEditing.id;
+  try {
+    const r = await api(schedEditing ? '/api/scheds/update' : '/api/scheds', { method: 'POST', body: JSON.stringify(b) });
+    flash($('#scSave'));
+    $('#schedModal').style.display = 'none';
+    if (r.sched && r.sched.nextRun) { await loadScheds(); }
+    else await loadScheds();
+  } catch (e) { $('#scHint').textContent = '没存上：' + e.message; }
 }
 async function loadPrompts() {
   if (!$('#plist')) return;
@@ -1141,6 +1379,7 @@ function renderTasks() {
     else { ov = { cls: 's-done', txt: '完成' }; prog = `${runs.length}/${runs.length}`; }
     const tags = (t.mode === 'pool' ? `<span class="chip p${t.prio}">${['紧急','重要','加大力度发展'][t.prio]}</span>` : '')
       + (t.src ? '<span class="chip">飞书表</span>' : '')
+      + (t.schedName ? `<span class="chip" title="这条是定时任务到点自动发的：${esc(t.schedName)}">定时</span>` : '')
       + (t.expert ? `<span class="chip">专家 ${esc(expertName(t.expert))}</span>` : '')
       + (t.model ? `<span class="chip">模型 ${esc(t.model)}</span>` : '');
     return `<div class="task ${t.id === selTask ? 'sel' : ''}${taskPicked.has(t.id) ? ' pick' : ''}" data-id="${t.id}">
@@ -1444,10 +1683,11 @@ async function boot() {
   KEY = ''; localStorage.removeItem('fleetKey'); // 有登录凭证就够了，别在浏览器里留着口令
   shell();
   renderSessBar();
-  VIEW = location.hash === '#prompts' ? 'prompts' : 'tasks';
+  VIEW = location.hash === '#prompts' ? 'prompts' : location.hash === '#scheds' ? 'scheds' : 'tasks';
   applyView();
   try { await refresh(); } catch { return; }
   if (VIEW === 'prompts') loadPrompts();
+  if (VIEW === 'scheds') loadScheds();
   setInterval(() => refresh().catch(() => {}), 2500);
   setInterval(() => { if (selTask && (!detail || detail.pending || detail.waiting || Object.values(detail.runs).some(r => ['queued','sent','running'].includes(r.status)))) loadDetail().catch(() => {}); }, 1200);
 }
