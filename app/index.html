@@ -72,7 +72,7 @@
 
   main { display:grid; grid-template-columns:320px 1fr; gap:16px; padding:18px 24px 30px; max-width:1600px; width:100%; margin:0 auto; }
   main > section { min-width:0; }
-  #viewPrompts { grid-template-columns:1fr; }
+  #viewPrompts, #viewScheds, #viewSkills { grid-template-columns:1fr; }
 
   /* ---------- 卡片 ---------- */
   .card { background:var(--card); border:1px solid var(--line); border-radius:var(--r-lg); padding:16px 18px; box-shadow:var(--sh); }
@@ -556,6 +556,7 @@ function shell() {
         <button class="on" data-view="tasks"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>任务</button>
         <button data-view="prompts"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>提示词</button>
         <button data-view="scheds"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>定时</button>
+        <button data-view="skills"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>技能</button>
       </nav>
       <div class="side-foot"><div><b>多机协同</b></div><div>指令交给空闲的电脑干</div></div>
     </aside>
@@ -687,6 +688,16 @@ function shell() {
           </div>
         </section>
       </main>
+      <main id="viewSkills" style="display:none">
+        <section>
+          <div class="card">
+            <h2>技能共享 <span class="n" id="skcount"></span>
+              <span class="tbar"><button id="skReload">刷新</button></span></h2>
+            <p class="muted">一台电脑上开发或修改的用户级技能（<code>~/.workbuddy/skills/</code>），几秒内自动共享给其它电脑，谁最后改就以谁的为准。各台电脑上删掉的不自动复活，要点「推送到全部」才装回来。</p>
+            <div id="sklist"></div>
+          </div>
+        </section>
+      </main>
     </div>
   </div>
   <div id="schedModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.42); z-index:65; align-items:center; justify-content:center">
@@ -774,6 +785,8 @@ function shell() {
   $('#pSearch').oninput = (e) => { promptQ = e.target.value.trim(); renderPrompts(); };
   // 定时任务页
   $('#sNew').onclick = () => openSchedForm(null);
+  // 技能页
+  $('#skReload').onclick = () => loadSkills();
   $('#schedClose').onclick = () => { $('#schedModal').style.display = 'none'; };
   $('#schedModal').onclick = (e) => { if (e.target.id === 'schedModal') $('#schedModal').style.display = 'none'; };
   $('#scKind').onchange = schedKindUI;
@@ -1080,17 +1093,19 @@ async function delTasks(ids) {
 
 // ---------- 提示词页 ----------
 function applyView() {
-  const a = $('#viewTasks'), b = $('#viewPrompts'), c = $('#viewScheds');
-  if (!a || !b || !c) return;
+  const a = $('#viewTasks'), b = $('#viewPrompts'), c = $('#viewScheds'), d = $('#viewSkills');
+  if (!a || !b || !c || !d) return;
   a.style.display = VIEW === 'tasks' ? '' : 'none';
   b.style.display = VIEW === 'prompts' ? '' : 'none';
   c.style.display = VIEW === 'scheds' ? '' : 'none';
+  d.style.display = VIEW === 'skills' ? '' : 'none';
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.view === VIEW));
   // 抬头跟着页面走：面包屑 + 标题 + 说明
   const heads = {
     tasks: ['任务', '任务<span class="sub">指令交给空闲的电脑干，也能让每台都做一遍</span>'],
     prompts: ['提示词', '提示词<span class="sub">发过的每一条都记在这儿，随时找回来再用</span>'],
     scheds: ['定时任务', '定时任务<span class="sub">到点自动发，不用人工盯着；没发出去会说明原因</span>'],
+    skills: ['技能共享', '技能共享<span class="sub">一台电脑开发的技能，其它电脑自动装上</span>'],
   };
   const h = heads[VIEW] || heads.tasks;
   const crumb = $('#crumbNow'), title = $('#pageTitle');
@@ -1098,12 +1113,13 @@ function applyView() {
   if (title) title.innerHTML = h[1];
 }
 function setView(v) {
-  VIEW = ['prompts', 'scheds'].includes(v) ? v : 'tasks';
+  VIEW = ['prompts', 'scheds', 'skills'].includes(v) ? v : 'tasks';
   const want = '#' + VIEW;
   if (location.hash !== want) { try { history.replaceState(null, '', want); } catch { location.hash = want; } }
   applyView();
   if (VIEW === 'prompts') loadPrompts();
   if (VIEW === 'scheds') loadScheds();
+  if (VIEW === 'skills') loadSkills();
 }
 // ---------- 定时任务页 ----------
 let schedList = [], schedEditing = null; // schedEditing：正在编辑的那条（null=新建）
@@ -1263,6 +1279,61 @@ async function saveSched() {
     else await loadScheds();
   } catch (e) { $('#scHint').textContent = '没存上：' + e.message; }
 }
+// ---------- 技能共享页 ----------
+let skillList = [], skillLoading = false;
+async function loadSkills() {
+  if (!$('#sklist') || skillLoading) return;
+  skillLoading = true;
+  try {
+    const r = await api('/api/skills');
+    skillList = r.skills || [];
+    renderSkills();
+  } catch (e) {
+    if (e.message !== '401') $('#sklist').innerHTML = `<div class="empty">没拉到：${esc(e.message)}</div>`;
+  } finally { skillLoading = false; }
+}
+const SK_ST = { ok: ['s-done', '已装'], diff: ['s-running', '版本不同'], removed: ['s-stopped', '已删'], stale: ['s-failed', '旧版'], none: ['s-queued', '未装'] };
+function skillSize(n) { return n > 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + 'MB' : Math.max(1, Math.round(n / 1024)) + 'KB'; }
+function renderSkills() {
+  const box = $('#sklist'); if (!box) return;
+  $('#skcount').textContent = skillList.length ? `共 ${skillList.length} 个` : '';
+  if (!skillList.length) { box.innerHTML = '<div class="empty">还没有共享的技能。在任何一台电脑的 <code>~/.workbuddy/skills/</code> 里放一个技能文件夹，几秒后就会自动出现在这里并分发给其它电脑。</div>'; return; }
+  box.innerHTML = skillList.map(s => {
+    const chips = Object.entries(s.states || {}).map(([n, v]) => {
+      const c = SK_ST[v] || SK_ST.none;
+      return `<span class="chip ${c[0]}" role="button" data-skm="${esc(n)}" data-skn="${esc(s.name)}" style="cursor:pointer" title="${esc(n)}：${c[1]}。点一下＝只从这台电脑上删掉（其它电脑不动，删过的不会自动装回，点「推送到全部」可装回）">${esc(n)} · ${c[1]}</span>`;
+    }).join(' ');
+    return `<div class="pm">
+      <div class="pmh"><b>${esc(s.name)}</b>
+        <span class="meta">来自 ${esc(s.from || '?')} · ${skillSize(s.size)} · ${s.files} 个文件 · ${fmtT(s.updatedAt)}</span>
+        <button class="mini ok" data-skpush="${esc(s.name)}" title="让所有电脑都装上：在这台上删过、没自动装的也装回来">推送到全部</button>
+        <button class="mini danger" data-skdel="${esc(s.name)}" title="总控不再分发这个技能，各台电脑上已有的文件不动">停止共享</button>
+        <button class="mini danger" data-skwipe="${esc(s.name)}" title="总控的条目和所有在线电脑上的文件都删掉">彻底删除</button></div>
+      <div class="chips" style="margin-top:8px">${chips}</div>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-skpush]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await api('/api/skills/push', { method: 'POST', body: JSON.stringify({ id: b.dataset.skpush }) }); flash(b, '已推送'); await loadSkills(); }
+    catch (e) { b.disabled = false; alert('没推出去：' + e.message); }
+  });
+  box.querySelectorAll('[data-skdel]').forEach(b => b.onclick = async () => {
+    if (!confirm(`停止共享「${b.dataset.skdel}」？\n\n总控里删掉这个条目，以后不再分发；各台电脑上已经装了的文件不动，也不会再被同步改动。\n（要连电脑上的一起删，用「彻底删除」）`)) return;
+    try { await api('/api/skills/delete', { method: 'POST', body: JSON.stringify({ ids: [b.dataset.skdel] }) }); await loadSkills(); }
+    catch (e) { alert('没删掉：' + e.message); }
+  });
+  box.querySelectorAll('[data-skwipe]').forEach(b => b.onclick = async () => {
+    if (!confirm(`彻底删除「${b.dataset.skwipe}」？\n\n总控的共享条目、以及所有在线电脑上这个技能的文件都删掉。\n离线电脑上的删不到，但它下次上线也不会再收到。`)) return;
+    try { await api('/api/skills/delete', { method: 'POST', body: JSON.stringify({ ids: [b.dataset.skwipe], everywhere: true }) }); await loadSkills(); }
+    catch (e) { alert('没删掉：' + e.message); }
+  });
+  box.querySelectorAll('[data-skm]').forEach(b => b.onclick = async () => {
+    if (!confirm(`把「${b.dataset.skn}」从「${b.dataset.skm}」上删掉？\n\n只删这一台电脑上的，其它电脑不动。删过之后这台不会自动装回，要装回点「推送到全部」。`)) return;
+    try { await api('/api/skills/machine-del', { method: 'POST', body: JSON.stringify({ id: b.dataset.skn, machine: b.dataset.skm }) }); await loadSkills(); }
+    catch (e) { alert('没删掉：' + e.message); }
+  });
+}
+
 async function loadPrompts() {
   if (!$('#plist')) return;
   $('#plist').innerHTML = '<div class="empty">读取中…</div>';
@@ -1683,12 +1754,14 @@ async function boot() {
   KEY = ''; localStorage.removeItem('fleetKey'); // 有登录凭证就够了，别在浏览器里留着口令
   shell();
   renderSessBar();
-  VIEW = location.hash === '#prompts' ? 'prompts' : location.hash === '#scheds' ? 'scheds' : 'tasks';
+  VIEW = location.hash === '#prompts' ? 'prompts' : location.hash === '#scheds' ? 'scheds' : location.hash === '#skills' ? 'skills' : 'tasks';
   applyView();
   try { await refresh(); } catch { return; }
   if (VIEW === 'prompts') loadPrompts();
   if (VIEW === 'scheds') loadScheds();
+  if (VIEW === 'skills') loadSkills();
   setInterval(() => refresh().catch(() => {}), 2500);
+  setInterval(() => { if (VIEW === 'skills' && $('#sklist')) loadSkills().catch(() => {}); }, 5000); // 技能页 5 秒自动刷：装没装上一眼就见
   setInterval(() => { if (selTask && (!detail || detail.pending || detail.waiting || Object.values(detail.runs).some(r => ['queued','sent','running'].includes(r.status)))) loadDetail().catch(() => {}); }, 1200);
 }
 boot();

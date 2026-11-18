@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync, execFile, execFileSync } = require('child_process');
 
-const VERSION = '1.10.1';
+const VERSION = '1.11.0';
 const arg = (k) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : undefined; };
 const CFG = arg('config') ? JSON.parse(fs.readFileSync(arg('config'), 'utf8').replace(/^\uFEFF/, '')) : {};
 const HUB = (arg('hub') || CFG.hub || process.env.FLEET_HUB || '').replace(/\/$/, '');
@@ -156,6 +156,171 @@ function refreshDirs(force) {
   if (!force && Date.now() - dirsAt < 600000) return; // 10 分钟扫一次就够，别每轮都翻硬盘
   dirsAt = Date.now();
   try { DIRS = scanDirs(); } catch { DIRS = []; }
+}
+
+// ---------- 技能共享 ----------
+// 本机的用户级技能（~/.workbuddy/skills/<名字>/）和总控互通：自己开发/改了自动传上去，
+// 别的电脑开发的自动装下来 —— 全自动，谁最后改就以谁的为准。只在 ~/.workbuddy/skills 下动手，
+// 不碰插件缓存里那些由 WorkBuddy 商店管的技能。
+const SKILLS_ROOT = path.join(os.homedir(), '.workbuddy', 'skills');
+const SKILL_BYTES_MAX = 2 << 20; // 单个技能最大 2MB，超大的多半不是技能，不同步
+const SKILL_FILES_MAX = 200;     // 单个技能最多 200 个文件
+// 本机删过哪些技能：记在 ~/.workbuddy/.wb-skills-removed（不在技能目录里，不会被当成技能）
+// 为什么要记：用户手动删掉的技能，总控不该再自动装回来（用户定的规矩：删除不自动同步）。
+// 只记「删过」这一事实，等这个技能在总控那边被改了内容，才会重新装。
+const SKILL_REMOVED_FILE = path.join(os.homedir(), '.workbuddy', '.wb-skills-removed.json');
+function readRemoved() {
+  try { const j = JSON.parse(fs.readFileSync(SKILL_REMOVED_FILE, 'utf8')); return Array.isArray(j) ? j : []; }
+  catch { return []; }
+}
+function writeRemoved(list) {
+  try { fs.mkdirSync(path.dirname(SKILL_REMOVED_FILE), { recursive: true }); fs.writeFileSync(SKILL_REMOVED_FILE, JSON.stringify(list.slice(-200))); }
+  catch {}
+}
+function markRemoved(name) {
+  const l = readRemoved();
+  if (!l.includes(name)) { l.push(name); writeRemoved(l); }
+}
+function clearRemoved(name) {
+  const l = readRemoved();
+  const i = l.indexOf(name);
+  if (i >= 0) { l.splice(i, 1); writeRemoved(l); }
+}
+function skillFiles(root, base = '') {
+  const out = [];
+  let es = [];
+  try { es = fs.readdirSync(root, { withFileTypes: true }); } catch { return out; }
+  es.sort((a, b) => (a.name < b.name ? -1 : 1));
+  for (const e of es) {
+    const rel = base ? base + '/' + e.name : e.name;
+    if (e.isDirectory()) out.push(...skillFiles(path.join(root, e.name), rel));
+    else if (e.isFile()) out.push(rel);
+    if (out.length > SKILL_FILES_MAX) break;
+  }
+  return out;
+}
+function scanSkills() {
+  const out = [];
+  const removed = new Set(readRemoved());
+  let ds = [];
+  try { ds = fs.readdirSync(SKILLS_ROOT, { withFileTypes: true }); } catch { return out; }
+  for (const d of ds) {
+    if (!d.isDirectory()) continue;
+    const dir = path.join(SKILLS_ROOT, d.name);
+    const files = skillFiles(dir);
+    if (!files.length || files.length > SKILL_FILES_MAX) continue;
+    const h = crypto.createHash('sha256');
+    let size = 0, newest = 0, tooBig = false;
+    try {
+      for (const rel of files) {
+        const st = fs.statSync(path.join(dir, rel));
+        size += st.size;
+        if (st.mtimeMs > newest) newest = st.mtimeMs;
+        if (size > SKILL_BYTES_MAX) { tooBig = true; break; }
+        h.update(rel); h.update('\0'); h.update(fs.readFileSync(path.join(dir, rel)));
+      }
+    } catch { continue; } // 正在被人改写，这轮先跳过
+    if (tooBig || !size) continue;
+    out.push({ name: d.name, hash: h.digest('hex').slice(0, 20), mtime: Math.round(newest), size });
+  }
+  return out;
+}
+let SKILLS = [], skillsAt = 0, SKILL_GONE = new Set();
+// 扫技能目录。顺带发现「用户自己删掉的」：上轮有、这轮没了 → 记进删除名单，
+// 总控据此知道这台不要这个技能，不会自动装回来。
+function refreshSkills(force) {
+  if (!force && Date.now() - skillsAt < 3000) return; // 技能目录很小，3 秒一扫，改动几秒内就能共享出去
+  const prev = new Map(SKILLS.map((s) => [s.name, s.hash]));
+  skillsAt = Date.now();
+  let next = [];
+  try { next = scanSkills(); } catch { next = []; }
+  for (const [n] of prev) {
+    if (!next.some((s) => s.name === n)) { SKILL_GONE.add(n); markRemoved(n); }
+  }
+  SKILLS = next;
+}
+function skillNameOk(s) {
+  const v = String(s || '').trim().replace(/[\\/\u0000-\u001f<>:"|?*]/g, '').replace(/^\.+/, '').slice(0, 80);
+  return v;
+}
+// 解压前把每个相对路径过一遍：绝对路径、盘符、..、空段一律拒收，防止把文件写到技能目录外面
+function skillPathOk(p) {
+  if (typeof p !== 'string' || !p || p.includes('\0') || p.length > 200) return false;
+  if (/^[/\\]/.test(p) || /^[a-zA-Z]:/.test(p)) return false;
+  return p.split(/[/\\]/).every((x) => x && x !== '.' && x !== '..');
+}
+// 总控要这份技能的正文：打成 base64 传上去
+async function skillUpload(rawName) {
+  const name = skillNameOk(rawName);
+  if (!name) return;
+  const dir = path.join(SKILLS_ROOT, name);
+  if (!fs.existsSync(dir)) return; // 已经没了就当无事发生，下一轮对账自然清楚
+  const files = [];
+  let size = 0;
+  for (const rel of skillFiles(dir)) {
+    if (files.length >= SKILL_FILES_MAX) return;
+    const buf = fs.readFileSync(path.join(dir, rel));
+    size += buf.length;
+    if (size > SKILL_BYTES_MAX) return; // 超大：不传，等总控那边的版本覆盖回来
+    files.push({ p: rel, d: buf.toString('base64') });
+  }
+  if (!files.length) return;
+  await api('/api/agent/skill', { name, from: NAME, files }, 60000);
+}
+// 从总控下载一份技能装到本机（先删掉旧的再写，保证和共享版完全一致）
+async function skillInstall(rawName) {
+  const name = skillNameOk(rawName);
+  if (!name) return;
+  try {
+    const r = await fetch(HUB + '/api/agent/skill?name=' + encodeURIComponent(name), { headers: { 'x-fleet-key': KEY } });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && Array.isArray(j.files) && j.files.length && j.files.every((f) => skillPathOk(f.p))) skillWrite(name, j.files);
+  } catch { /* 网络不通下次再试，不挡着领活 */ }
+}
+function skillWrite(name, files) {
+  const dir = path.join(SKILLS_ROOT, name);
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  for (const f of files) {
+    const full = path.join(dir, ...f.p.split('/'));
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, Buffer.from(f.d || '', 'base64'));
+  }
+  clearRemoved(name); // 装回来了就不用再记「删过」
+  SKILL_GONE.delete(name);
+  skillsAt = 0; // 装完立刻重扫，下次上报的就是新版本，总控不会重复催
+}
+// 删掉：记下「这台删过」，总控就不会自动装回来（用户定的规矩）
+function skillRemove(rawName, byUser) {
+  const name = skillNameOk(rawName);
+  if (!name) return;
+  try { fs.rmSync(path.join(SKILLS_ROOT, name), { recursive: true, force: true }); } catch {}
+  markRemoved(name);
+  skillsAt = 0;
+}
+async function handleSkillCmds(sc) {
+  for (const n of (sc && sc.del) || []) skillRemove(n);
+  for (const n of (sc && sc.want) || []) await skillInstall(n);
+  for (const n of (sc && sc.get) || []) await skillUpload(n);
+}
+// 技能轮询：独立于派活通道，每 3 秒问一次总控「有没有新技能」。
+// 走独立接口是为了不占派活那条长连接（那条要等最多 25 秒），技能才能几秒内就到别的电脑。
+let skillBusy = false;
+async function skillLoop() {
+  if (skillBusy) return;
+  skillBusy = true;
+  try {
+    refreshSkills(false);
+    const removed = [...new Set([...readRemoved(), ...SKILL_GONE])].map(skillNameOk).filter(Boolean).slice(0, 100);
+    const r = await api('/api/agent/skills', { name: NAME, skills: SKILLS, removed }, 15000);
+    if (r.skills && (r.skills.want || r.skills.get || r.skills.del)) {
+      const before = SKILLS.map((s) => s.name + ':' + s.hash).join(',');
+      await handleSkillCmds(r.skills);
+      refreshSkills(true);
+      const after = SKILLS.map((s) => s.name + ':' + s.hash).join(',');
+      if (before !== after) log('技能已同步：' + SKILLS.map((s) => s.name).join('、'));
+    }
+  } catch { /* 网络不通下次再问，不影响干活 */ }
+  finally { skillBusy = false; }
 }
 
 // 命令行有没有 --agent / --model 这两个参数（老版本没有）
@@ -646,7 +811,10 @@ async function main() {
   await sleep(1000); lastCpu = cpuLoad() ?? 0; // 先量一秒，第一次报上去的 CPU 就准
   try { fs.mkdirSync(WORKDIR, { recursive: true }); } catch {}
   refreshDirs(true);
-  log(`WorkBuddy 连接程序 ${VERSION} 启动：名字「${NAME}」，总控 ${HUB}，默认文件夹 ${WORKDIR}，命令行 ${CLI || '没找到'}，本机专家 ${EXPERTS.length} 个，可干活目录 ${DIRS.length} 个`);
+  refreshSkills(true);
+  log(`WorkBuddy 连接程序 ${VERSION} 启动：名字「${NAME}」，总控 ${HUB}，默认文件夹 ${WORKDIR}，命令行 ${CLI || '没找到'}，本机专家 ${EXPERTS.length} 个，可干活目录 ${DIRS.length} 个，本机技能 ${SKILLS.length} 个`);
+  // 技能共享：独立轮询，不占派活那条长连接
+  setInterval(() => { skillLoop().catch(() => {}); }, 3000);
   let fails = 0, lastCliCheck = Date.now();
   for (;;) {
     try {

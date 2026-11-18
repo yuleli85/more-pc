@@ -126,16 +126,23 @@ let needPromptMigrate = false;
 //    lastRun, nextRun, lastTry, lastErr, lastOk, lastTaskIds, note, createdAt }]
 let scheds = [];
 const SCHED_MAX = 100; // 最多存 100 条定时任务
-const stateFile = path.join(DATA_DIR, 'state.json');
-try {
+// skills: 技能共享注册表（一台电脑开发的技能自动共享给其它电脑）
+// [{ name, hash, prevHash, from, size, updatedAt, fileCount, installs: { 机器名: { hash, at, removed } } }]
+// 技能正文（文件清单＋base64）不进 state.json，单独存 data/skills/<名字>.json
+let skills = [];
+const SKILLS_MAX = 200;          // 注册表最多 200 条
+const SKILL_BYTES_MAX = 2 << 20; // 单个技能最大 2MB（再大的多半不是技能，不该往各台机器上塞）
+const SKILL_FILES_MAX = 200;     // 单个技能最多 200 个文件
+const stateFile = path.join(DATA_DIR, 'state.json');try {
   const s = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
   tasks = s.tasks || [];
   machineDirs = s.machineDirs || {};
   prompts = s.prompts || [];
   scheds = s.scheds || [];
+  skills = (Array.isArray(s.skills) ? s.skills : []).map((x) => ({ ...x, installs: x.installs || {} }));
   promptsMigrated = !!s.promptsMigrated;
   needPromptMigrate = !promptsMigrated && !prompts.length && tasks.length > 0;
-  for (const m of s.machines || []) machines.set(m.name, { ...m, waiter: null, busy: null });
+  for (const m of s.machines || []) machines.set(m.name, { ...m, waiter: null, busy: null, skillCmds: null, skillHashes: null });
   // 重启前还在跑的，标成中断
   for (const t of tasks) for (const r of Object.values(t.runs)) if (r.status === 'running' || r.status === 'sent') { r.status = 'failed'; r.error = '总控重启，这次中断了'; r.endedAt = Date.now(); }
 } catch { /* 第一次启动 */ }
@@ -144,7 +151,7 @@ let saveTimer = null;
 function writeState() {
   const ms = [...machines.values()].map(({ waiter, busy, ...m }) => m);
   const tmp = stateFile + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ machines: ms, tasks: tasks.slice(-200), machineDirs, prompts: prompts.slice(-PROMPT_MAX), scheds: scheds.slice(-SCHED_MAX), promptsMigrated }));
+  fs.writeFileSync(tmp, JSON.stringify({ machines: ms, tasks: tasks.slice(-200), machineDirs, prompts: prompts.slice(-PROMPT_MAX), scheds: scheds.slice(-SCHED_MAX), skills: skills.slice(-SKILLS_MAX), promptsMigrated }));
   fs.renameSync(tmp, stateFile);
 }
 // 删除这类「删了就不该复活」的操作直接落盘，不等防抖
@@ -197,9 +204,10 @@ const byId = (id) => tasks.find((x) => x.id === id);
 // ---------- 专家 / 模型 ----------
 // 连接程序把这两个值拼到命令行上：--agent <专家> --model <模型>。
 // 只有 1.7.0 以后的连接程序才认这两个字段；老连接程序会当没看见，所以按版本卡住，不让它"静默跑错"。
-const AGENT_LATEST = '1.10.1';
+const AGENT_LATEST = '1.11.0';
 const AGENT_MIN = '1.7.0'; // 1.7.0 起支持指定专家/模型；1.8.0 起会回报本机可干活目录
 const AGENT_SESSION_MIN = '1.10.1'; // 1.10.0 起支持「接着指定会话」＋回报客户端会话 id
+const AGENT_SKILLS_MIN = '1.11.0';  // 1.11.0 起支持技能共享（自动上传 / 自动安装）
 // 只允许字母数字开头的安全串：绝不能以 - 开头，否则可能被当成命令行参数
 const SPECIAL_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,59}$/;
 function cleanSpecial(s) {
@@ -219,6 +227,7 @@ function cmpVer(a, b) {
 }
 const agentSupports = (m) => !!m && cmpVer(m.agentVersion, AGENT_MIN) >= 0;
 const agentSessionSupports = (m) => !!m && cmpVer(m.agentVersion, AGENT_SESSION_MIN) >= 0;
+const agentSkillsSupports = (m) => !!m && cmpVer(m.agentVersion, AGENT_SKILLS_MIN) >= 0;
 
 // 兜底默认：页面上不选时就用这两个
 const DEFAULT_EXPERT = 'senior-developer';
@@ -455,6 +464,7 @@ function kick(name) {
 function dispatch(name, res) {
   const m = machines.get(name);
   const cancel = cancelsFor(name);
+  const sc = m.skillCmds; m.skillCmds = null; // 技能共享指令只带一次，带了就要有人做
   let job = null;
   if (!m.busy) {
     const n = nextJobFor(name);
@@ -490,7 +500,7 @@ function dispatch(name, res) {
       };
     }
   }
-  send(res, 200, { job, cancel, agentV: AGENT_LATEST });
+  send(res, 200, { job, cancel, agentV: AGENT_LATEST, skills: sc || undefined });
 }
 
 // ---------- 小工具 ----------
@@ -784,6 +794,130 @@ for (const s of scheds) {
   }
 }
 
+// ---------- 技能共享 ----------
+// 全自动双向：一台电脑上开发/改了用户级技能（~/.workbuddy/skills/<名字>/），连接程序把它
+// 打包传到总控；总控记进注册表，其它电脑下一次来问（秒级）就自动下载装好。
+// 冲突以「最后改的」为准：上报的版本比注册表新就收上来，比注册表旧就下发覆盖。
+// 删除不自动同步：一台上删了只标记「这台删过」，不再自动装回来；网页上可手动删、手动推送。
+const skillDir = path.join(DATA_DIR, 'skills');
+fs.mkdirSync(skillDir, { recursive: true });
+const skillDels = new Map(); // 机器名 -> Set(技能名)：网页点了「删这台上的」，下次它来问捎过去
+// 「推送到全部」的强制标记存在技能条目自己的 forced 里（s.forced = { 机器名: true }），
+// 这样总控重启也不丢 —— 机器中途上线、还没装好，它上报的「删过」不会被当真。
+function queueSkillDel(machine, name) {
+  if (!machine || !name) return;
+  let q = skillDels.get(machine);
+  if (!q) { q = new Set(); skillDels.set(machine, q); }
+  q.add(name);
+}
+// 技能名做文件夹名，得剥掉路径分隔符和控制字符；不许以点开头（藏文件）
+function skillNameOk(s) {
+  const v = String(s || '').trim().replace(/[\\/\u0000-\u001f<>:"|?*]/g, '').replace(/^\.+/, '').slice(0, 80);
+  return v;
+}
+const skillFileOf = (name) => path.join(skillDir, name + '.json');
+const skillHasContent = (s) => { try { return fs.existsSync(skillFileOf(s.name)); } catch { return false; } };
+// 和连接程序约定好的算法：按路径排序，路径 + \0 + 文件字节，喂给 sha256
+function skillHash(files) {
+  const h = crypto.createHash('sha256');
+  for (const f of [...files].sort((a, b) => (a.p < b.p ? -1 : 1))) { h.update(f.p); h.update('\0'); h.update(Buffer.from(f.d, 'base64')); }
+  return h.digest('hex').slice(0, 20);
+}
+const skillBytes = (files) => files.reduce((n, f) => n + Math.floor(f.d.length * 0.75), 0);
+// 相对路径安全检查：拒绝绝对路径、盘符、.. 、空段 —— 不然解压能把文件写到技能目录外面
+function skillPathOk(p) {
+  if (typeof p !== 'string' || !p || p.includes('\0') || p.length > 200) return false;
+  if (/^[/\\]/.test(p) || /^[a-zA-Z]:/.test(p)) return false;
+  return p.split(/[/\\]/).every((x) => x && x !== '.' && x !== '..');
+}
+// 连接程序每次来问都带本机技能清单，在这里和注册表对账，算出该它做的三件事：
+//   get  把这台上新开发 / 改过的技能传上来
+//   want 把别的电脑开发的技能装到这台
+//   del  网页上点了「删这台上的」
+// 这台自己删掉的（b.removed）→ 记下来，不再自动装回（用户定的规矩：删除不自动同步）
+function skillCmdsFor(m, reported, removed) {
+  const want = [], get = [], del = [];
+  const rep = new Map();
+  for (const s of reported) {
+    const n = skillNameOk(s && s.name);
+    if (n) rep.set(n, { hash: String((s && s.hash) || '').slice(0, 40), mtime: Math.round(+(s && s.mtime) || 0) });
+  }
+  m.skillHashes = Object.fromEntries([...rep].map(([n, r]) => [n, r.hash])); // 网页技能页显示各台装到什么程度用
+  // 先处理「这台自己删过的」：记下来，之后不再自动装回（除非用户点「推送到全部」）
+  // 必须在算 want 之前处理：这台删了就不会再出现在 skills 清单里，
+  // 若先算 want 就会把它当成「没装」又装回去。
+  for (const rn of (removed || [])) {
+    const n = skillNameOk(rn);
+    if (!n) continue;
+    const s = skills.find((x) => x.name === n);
+    if (!s) continue;
+    if (s.forced && s.forced[m.name]) continue; // 用户点过「推送」：别再当删除
+    s.installs = s.installs || {};
+    const mine = s.installs[m.name] = s.installs[m.name] || {};
+    if (!mine.removed) { mine.removed = true; mine.at = Date.now(); }
+  }
+  for (const s of skills) {
+    if (!skillHasContent(s)) continue; // 正文文件没了：既不收也不发
+    const r = rep.get(s.name);
+    s.installs = s.installs || {};
+    const mine = s.installs[m.name] = s.installs[m.name] || {};
+    if (r && r.hash === s.hash) { mine.hash = s.hash; mine.at = Date.now(); mine.removed = false; if (s.forced) delete s.forced[m.name]; continue; } // 已是最新
+    if (r) {
+      // 这台上的版本和注册表不一样：就是注册表上一版 → 旧的，补装；
+      // 比注册表还早 5 分钟以上 → 旧的，补装（留 5 分钟时钟误差）；
+      // 刚改过（或时钟差在 5 分钟内）→ 以它为准，请它传上来。
+      if (r.hash === s.prevHash || r.mtime + 300000 < s.updatedAt) { want.push(s.name); }
+      else get.push(s.name);
+    } else if (!mine.removed) want.push(s.name); // 这台没有：自动装（在这台上删过的除外，删的不复活）
+  }
+  for (const [n, r] of rep) {
+    if (r.hash && !skills.some((x) => x.name === n)) get.push(n); // 这台新开发的技能：收上来共享
+  }
+  const q = skillDels.get(m.name);
+  if (q && q.size) { for (const n of q) del.push(n); q.clear(); }
+  // 「推送到全部」：强制装回来。连接程序本地记着「删过」，光把注册表的标记清了不管用，
+  // 得明确告诉它「这个要装回去」，它装完才会忘掉删过这件事。
+  // forced 是「粘性」的：一直留着，直到这台装上（上报的 hash 对上了）才撤掉，
+  // 免得机器中途上线、还没装好就把它上报的「删过」又当真。
+  for (const s of skills) {
+    if (!s.forced || !s.forced[m.name]) continue;
+    if (!skillHasContent(s)) continue;
+    s.installs = s.installs || {}; s.installs[m.name] = { ...(s.installs[m.name] || {}), removed: false };
+    want.push(s.name);
+  }
+  const out = {};
+  if (want.length) out.want = [...new Set(want)];
+  if (get.length) out.get = [...new Set(get)];
+  if (del.length) out.del = [...new Set(del)];
+  return Object.keys(out).length ? out : null;
+}
+// 网页技能页：每个技能在各台电脑上装到什么程度
+function skillStates(s) {
+  const out = {};
+  for (const m of machines.values()) {
+    const inst = (s.installs || {})[m.name] || {};
+    let st = 'none';
+    if (online(m)) {
+      const h = (m.skillHashes || {})[s.name];
+      const hh = h && typeof h === 'object' ? h.hash : h; // 兼容存成 {hash,mtime} 的旧格式
+      if (hh === s.hash) st = 'ok';
+      else if (hh) st = inst.removed ? 'removed' : 'diff';
+      else st = inst.removed ? 'removed' : 'none';
+    } else {
+      st = inst.removed ? 'removed' : (inst.hash === s.hash ? 'ok' : inst.hash ? 'stale' : 'none');
+    }
+    out[m.name] = st;
+  }
+  return out;
+}
+function skillView(s) {
+  return {
+    name: s.name, hash: s.hash, from: s.from || '', size: s.size || 0, updatedAt: s.updatedAt || 0, files: s.fileCount || 0,
+    installs: Object.fromEntries(Object.entries(s.installs || {}).map(([n, i]) => [n, { hash: i.hash || '', at: i.at || 0, removed: !!i.removed }])),
+    states: skillStates(s),
+  };
+}
+
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res) => {
   try {
@@ -867,6 +1001,8 @@ const server = http.createServer(async (req, res) => {
           .map((d) => ({ p: String((d && d.p) || '').slice(0, 260), proj: !!(d && d.proj), wb: !!(d && d.wb), recent: Number((d && d.recent) || 999) }))
           .filter((d) => d.p);
       }
+      // 技能共享对账不在这里做（那条连接要等最多 25 秒），改走独立接口 /api/agent/skills，
+      // 连接程序每 3 秒问一次，技能几秒内就到别的电脑，不拖累派活。
       // 升级任务：这台重连上来且版本已到最新，就把那条「升级」记成成功
       // （升级最后一步就是重启连接程序，上报必然断开一次，属正常，不能记成失败）
       if (tasks.some((t) => t.kind === 'upgrade')) {
@@ -911,7 +1047,7 @@ const server = http.createServer(async (req, res) => {
       if (cancelsFor(name).length || (!m.busy && nextJobFor(name))) return dispatch(name, res);
       // 没活就挂着等，最长 25 秒（有新活会提前叫醒）
       const respond = () => { m.lastSeen = Date.now(); dispatch(name, res); };
-      m.waiter = { respond, empty: () => send(res, 200, { job: null, cancel: [], agentV: AGENT_LATEST }), timer: setTimeout(() => { if (m.waiter && m.waiter.respond === respond) m.waiter = null; respond(); }, 25000) };
+      m.waiter = { respond, empty: () => { const c = m.skillCmds; m.skillCmds = null; send(res, 200, { job: null, cancel: [], agentV: AGENT_LATEST, skills: c || undefined }); }, timer: setTimeout(() => { if (m.waiter && m.waiter.respond === respond) m.waiter = null; respond(); }, 25000) };
       // 连接断了（对方断网、关机）就别再往这条连接上发活；要听 res 的 close，req 的 close 读完请求体就触发了
       res.on('close', () => { if (!res.writableFinished && m.waiter && m.waiter.respond === respond) { clearTimeout(m.waiter.timer); m.waiter = null; } });
       return;
@@ -951,6 +1087,61 @@ const server = http.createServer(async (req, res) => {
       }
       save();
       return send(res, 200, { ok: true, cancel: !!r.cancel });
+    }
+    // ----- 技能共享：连接程序问「有没有要我装的 / 要我传的」 -----
+    // 独立接口，不等任务：连接程序每 3 秒问一次，别的电脑开发的技能几秒内就到
+    if (p === '/api/agent/skills' && req.method === 'POST') {
+      const b = await readBody(req);
+      const name = cleanName(b.name);
+      if (!name) return send(res, 400, { error: 'name required' });
+      let m = machines.get(name);
+      if (!m) { m = { name, busy: null, waiter: null }; machines.set(name, m); }
+      m.lastSeen = Date.now();
+      if (b.agentVersion) m.agentVersion = String(b.agentVersion).slice(0, 20);
+      if (!agentSkillsSupports(m)) return send(res, 200, { ok: true, skills: null, agentV: AGENT_LATEST });
+      m.skillCmds = skillCmdsFor(m, (Array.isArray(b.skills) ? b.skills : []).slice(0, 100), Array.isArray(b.removed) ? b.removed.slice(0, 100) : []);
+      const sc = m.skillCmds; m.skillCmds = null;
+      if (sc) console.log(`[技能] ${name}：${sc.want && sc.want.length ? '装 ' + sc.want.join('、') : ''}${sc.get && sc.get.length ? ' 传 ' + sc.get.join('、') : ''}${sc.del && sc.del.length ? ' 删 ' + sc.del.join('、') : ''}`);
+      return send(res, 200, { ok: true, skills: sc || undefined, agentV: AGENT_LATEST });
+    }
+    // ----- 技能共享：连接程序上传正文 -----
+    if (p === '/api/agent/skill' && req.method === 'POST') {
+      const b = await readBody(req, 8 << 20);
+      const name = skillNameOk(b.name);
+      const from = cleanName(b.from || '');
+      if (!name) return send(res, 400, { error: '技能名不合法' });
+      if (!from || !machines.has(from)) return send(res, 400, { error: '不知道是哪台电脑（from）' });
+      const files = (Array.isArray(b.files) ? b.files : [])
+        .map((f) => ({ p: String((f && f.p) || ''), d: String((f && f.d) || '') }))
+        .filter((f) => f.p && f.d)
+        .slice(0, SKILL_FILES_MAX);
+      if (!files.length) return send(res, 400, { error: '没有文件，不同步' });
+      for (const f of files) {
+        if (!skillPathOk(f.p)) return send(res, 400, { error: '文件路径不合法：' + f.p.slice(0, 60) });
+        if (!/^[A-Za-z0-9+/=\r\n]+$/.test(f.d)) return send(res, 400, { error: '文件内容不是 base64：' + f.p.slice(0, 60) });
+      }
+      if (skillBytes(files) > SKILL_BYTES_MAX) return send(res, 400, { error: '技能超过 2MB，不同步（看看是不是把别的东西放进技能文件夹了）' });
+      const hash = skillHash(files);
+      let s = skills.find((x) => x.name === name);
+      if (s && s.hash === hash) { // 内容没变：只把这台标记成「已装最新」
+        (s.installs = s.installs || {})[from] = { hash, at: Date.now(), removed: false };
+        save();
+        return send(res, 200, { ok: true, same: true });
+      }
+      fs.writeFileSync(skillFileOf(name), JSON.stringify({ name, hash, files }));
+      if (!s) { s = { name, installs: {} }; skills.push(s); if (skills.length > SKILLS_MAX) skills.splice(0, skills.length - SKILLS_MAX); }
+      Object.assign(s, { prevHash: s.hash || '', hash, from, size: skillBytes(files), updatedAt: Date.now(), fileCount: files.length });
+      console.log(`[技能] ${from} 上传了「${name}」（${s.fileCount} 个文件，${Math.round(s.size / 1024)}KB），其它电脑下次来问就自动装上`);
+      saveNow();
+      return send(res, 200, { ok: true });
+    }
+    // ----- 技能共享：连接程序下载正文 -----
+    if (p === '/api/agent/skill' && req.method === 'GET') {
+      const name = skillNameOk(u.searchParams.get('name'));
+      const s = skills.find((x) => x.name === name);
+      if (!s || !skillHasContent(s)) return send(res, 404, { error: '没有这个共享技能' });
+      try { return send(res, 200, JSON.parse(fs.readFileSync(skillFileOf(name), 'utf8'))); }
+      catch { return send(res, 404, { error: '读不到技能正文' }); }
     }
 
     // ----- 网页用 -----
@@ -1061,6 +1252,66 @@ const server = http.createServer(async (req, res) => {
       if (r.error) { saveNow(); return send(res, 400, { error: r.error, sched: s }); }
       saveNow();
       return send(res, 200, { ok: true, ids: r.made.map((t) => t.id), warn: r.warn, sched: s });
+    }
+    // ----- 技能共享：网页 -----
+    if (p === '/api/skills' && req.method === 'GET') {
+      return send(res, 200, { skills: skills.map(skillView) });
+    }
+    // 删共享条目：everywhere=false 只删总控的（各台电脑上文件不动）；
+    // everywhere=true 连各台电脑上的一起删（离线的删不到，只把它标成「已删」）
+    if (p === '/api/skills/delete' && req.method === 'POST') {
+      const b = await readBody(req);
+      const ids = Array.isArray(b.ids) ? [...new Set(b.ids.map(skillNameOk).filter(Boolean))] : [];
+      if (!ids.length) return send(res, 400, { error: '没说删哪个技能' });
+      const set = new Set(ids);
+      let queued = 0;
+      for (const n of set) {
+        const s = skills.find((x) => x.name === n);
+        if (!s) continue;
+        if (b.everywhere) {
+          for (const m of machines.values()) {
+            (s.installs = s.installs || {})[m.name] = { ...(s.installs[m.name] || {}), removed: true };
+            if ((m.skillHashes || {})[n]) { queueSkillDel(m.name, n); queued++; kick(m.name); }
+          }
+        }
+        try { fs.rmSync(skillFileOf(n)); } catch {}
+        // 共享条目没了，排队等推的也得撤掉，不然还会把删掉的技能装出去
+        for (const q of skillDels.values()) q.delete(n);
+      }
+      const before = skills.length;
+      skills = skills.filter((x) => !set.has(x.name));
+      saveNow();
+      if (before === skills.length) return send(res, 404, { error: '这些技能已经没了' });
+      return send(res, 200, { ok: true, removed: before - skills.length, queued });
+    }
+    // 推送：确保（勾选的或全部）电脑都装上这个技能 —— 在那台上删过、没自动装的也装回来
+    if (p === '/api/skills/push' && req.method === 'POST') {
+      const b = await readBody(req);
+      const s = skills.find((x) => x.name === skillNameOk(b.id));
+      if (!s || !skillHasContent(s)) return send(res, 404, { error: '没有这个共享技能' });
+      const picked = Array.isArray(b.targets) ? [...new Set(b.targets.map(cleanName))].filter((n) => machines.has(n)) : [];
+      const names = picked.length ? picked : [...machines.keys()];
+      for (const n of names) {
+        (s.installs = s.installs || {})[n] = { ...(s.installs[n] || {}), removed: false };
+        s.forced = s.forced || {}; s.forced[n] = true; // 明确让它装回去（它本地记着「删过」）
+        kick(n);
+      }
+      saveNow();
+      return send(res, 200, { ok: true, targets: names });
+    }
+    // 只删某一台上的：那台下次来问就删，之后不再自动装回（要点「推送」才装回）
+    if (p === '/api/skills/machine-del' && req.method === 'POST') {
+      const b = await readBody(req);
+      const s = skills.find((x) => x.name === skillNameOk(b.id));
+      const n = cleanName(b.machine);
+      if (!s) return send(res, 404, { error: '没有这个共享技能' });
+      if (!n || !machines.has(n)) return send(res, 400, { error: '没有这台电脑' });
+      (s.installs = s.installs || {})[n] = { ...(s.installs[n] || {}), removed: true };
+      if (s.forced) delete s.forced[n]; // 手动删了这台，撤掉「推送」的强制标记
+      queueSkillDel(n, s.name);
+      save();
+      kick(n);
+      return send(res, 200, { ok: true, machine: n, id: s.name });
     }
     if (p === '/api/tasks' && req.method === 'POST') {
       const b = await readBody(req);
