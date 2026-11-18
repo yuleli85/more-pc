@@ -22,6 +22,36 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const HERE = __dirname;
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// ---------- 日志（自己管文件，自动轮转）----------
+// 以前靠 run.cmd 把 stdout 重定向到 hub.log，日志只增不减 —— 有个死循环把它撑到 24MB。
+// 现在自己写文件：超过 20MB 就挪成 hub.log.1 重开一个，老的删掉。
+const LOG_FILE = path.join(DATA_DIR, 'hub.log');
+const LOG_MAX = 20 * 1024 * 1024;
+let logSize = 0;
+try { logSize = fs.statSync(LOG_FILE).size; } catch { logSize = 0; }
+function rotateLog() {
+  try {
+    if (logSize < LOG_MAX) return;
+    const old = LOG_FILE + '.1';
+    try { fs.rmSync(old); } catch {}
+    fs.renameSync(LOG_FILE, old);
+    logSize = 0;
+    console.log('[日志] 旧的挪成 hub.log.1，重新开一个');
+  } catch { /* 挪不动就算了，继续往现有文件写 */ }
+}
+const realLog = console.log.bind(console);
+console.log = (...a) => {
+  const line = a.map((x) => (typeof x === 'string' ? x : (() => { try { return JSON.stringify(x); } catch { return String(x); } })())).join(' ') + '\n';
+  try {
+    rotateLog();
+    fs.appendFileSync(LOG_FILE, line);
+    logSize += Buffer.byteLength(line);
+  } catch { /* 写不进去就算了，stdout 那边还有 */ }
+  realLog(line.replace(/\n$/, ''));
+};
+const realErr = console.error.bind(console);
+console.error = (...a) => { console.log(...a); realErr(...a); };
+
 // ---------- 口令 ----------
 // KEY 是「机器口令」：连接程序、加入/升级脚本用它，尽量别动（改了每台电脑都得重跑加入命令）
 const keyFile = path.join(DATA_DIR, 'key.txt');
