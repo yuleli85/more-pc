@@ -440,8 +440,24 @@
     .fctl input#workdir{ width:100% !important; }
   }
 
+  /* 技能页：展开的文件清单 */
+  .skfiles { margin:8px 0 2px; padding:8px 10px; border-radius:10px; background:#f8fbff; border:1px solid #e7effa; }
+  .skfiles .fl { display:flex; flex-direction:column; gap:3px; }
+  .skfiles .fr { display:flex; align-items:center; gap:10px; font-size:12px; }
+  .skfiles .fp { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#3b4a61; font-family:ui-monospace,Menlo,Consolas,monospace; }
+  .skfiles .fs { flex:none; color:#93a3b8; }
+
   /* 窄屏适配 */
   @media (max-width: 1200px) { .kpis{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  /* 技能页的搜索区：窄屏时换行，别把标题挤扁 */
+  @media (max-width: 1100px) {
+    #viewSkills h2 .tbar { width:100%; justify-content:flex-start; }
+    #viewSkills h2 { flex-wrap:wrap; }
+    #skSearch { flex:1 1 160px; width:auto !important; min-width:130px; }
+  }
+  @media (max-width: 560px) {
+    #viewSkills h2 .tbar select { flex:1 1 calc(50% - 6px); min-width:0; }
+  }
   @media (max-width: 1080px) {
     .tthead{ display:none; }
     .task{ grid-template-columns:28px minmax(0,1fr) 90px; align-items:start; }
@@ -692,8 +708,21 @@ function shell() {
         <section>
           <div class="card">
             <h2>技能共享 <span class="n" id="skcount"></span>
-              <span class="tbar"><button id="skReload">刷新</button></span></h2>
-            <p class="muted">一台电脑上开发或修改的用户级技能（<code>~/.workbuddy/skills/</code>），几秒内自动共享给其它电脑，谁最后改就以谁的为准。各台电脑上删掉的不自动复活，要点「推送到全部」才装回来。</p>
+              <span class="tbar">
+                <input type="text" id="skSearch" placeholder="搜技能名…" style="width:200px">
+                <select id="skFrom" title="只看来自某台电脑的技能"><option value="">全部来源</option></select>
+                <select id="skState" title="按安装状态筛">
+                  <option value="">全部状态</option>
+                  <option value="ok">已装最新</option>
+                  <option value="diff">版本不同</option>
+                  <option value="none">未装</option>
+                  <option value="removed">已删</option>
+                </select>
+                <select id="skMachine" title="只看某台电脑的情况"><option value="">全部电脑</option></select>
+                <label class="muted" title="只看在线的电脑里还没装好的技能（离线的电脑不算，它本来就传不了状态）"><input type="checkbox" id="skMissing"> 只看没装齐</label>
+                <button id="skReload">刷新</button>
+              </span></h2>
+            <p class="muted">一台电脑上开发或修改的用户级技能（<code>~/.workbuddy/skills/</code>），几秒内自动共享给其它电脑，谁最后改就以谁的为准。各台电脑上删掉的不自动复活，要点「推送到全部」才装回来。点技能名可以看它里面有哪些文件。</p>
             <div id="sklist"></div>
           </div>
         </section>
@@ -787,6 +816,17 @@ function shell() {
   $('#sNew').onclick = () => openSchedForm(null);
   // 技能页
   $('#skReload').onclick = () => loadSkills();
+  // 查询：搜技能名（回车或停手即筛）+ 来源/状态/电脑筛选
+  let skSearchT = null;
+  $('#skSearch').oninput = (e) => {
+    skillQ = e.target.value.trim();
+    clearTimeout(skSearchT);
+    skSearchT = setTimeout(() => loadSkills(), 220); // 打字时别每下一下都打一次总控
+  };
+  $('#skFrom').onchange = () => loadSkills();
+  $('#skState').onchange = () => loadSkills();
+  $('#skMachine').onchange = () => loadSkills();
+  $('#skMissing').onchange = () => loadSkills();
   $('#schedClose').onclick = () => { $('#schedModal').style.display = 'none'; };
   $('#schedModal').onclick = (e) => { if (e.target.id === 'schedModal') $('#schedModal').style.display = 'none'; };
   $('#scKind').onchange = schedKindUI;
@@ -1280,38 +1320,87 @@ async function saveSched() {
   } catch (e) { $('#scHint').textContent = '没存上：' + e.message; }
 }
 // ---------- 技能共享页 ----------
-let skillList = [], skillLoading = false;
+let skillList = [], skillLoading = false, skillMeta = { total: 0, matched: 0, notAll: 0, froms: [], machines: [] };
+let skillQ = '', skillDetail = null; // skillDetail：正在展开文件清单的技能名
 async function loadSkills() {
   if (!$('#sklist') || skillLoading) return;
   skillLoading = true;
   try {
-    const r = await api('/api/skills');
+    const p = new URLSearchParams();
+    if (skillQ) p.set('q', skillQ);
+    const from = $('#skFrom') ? $('#skFrom').value : '';
+    const st = $('#skState') ? $('#skState').value : '';
+    const mc = $('#skMachine') ? $('#skMachine').value : '';
+    if (from) p.set('from', from);
+    if (st) p.set('state', st);
+    if (mc) p.set('machine', mc);
+    if ($('#skMissing') && $('#skMissing').checked) p.set('missing', '1');
+    const r = await api('/api/skills' + (p.toString() ? '?' + p.toString() : ''));
     skillList = r.skills || [];
+    skillMeta = { total: r.total || 0, matched: r.matched || 0, notAll: r.notAll || 0, froms: r.froms || [], machines: r.machines || [] };
     renderSkills();
   } catch (e) {
     if (e.message !== '401') $('#sklist').innerHTML = `<div class="empty">没拉到：${esc(e.message)}</div>`;
   } finally { skillLoading = false; }
 }
+// 来源 / 电脑两个下拉：按总控给的清单填，选中项要保住
+function fillSkillFilters() {
+  const fr = $('#skFrom'), mc = $('#skMachine');
+  if (!fr || !mc) return;
+  const keepF = fr.value, keepM = mc.value;
+  const froms = skillMeta.froms || [];
+  if (froms.join('|') !== fr.dataset.sig) {
+    fr.dataset.sig = froms.join('|');
+    fr.innerHTML = '<option value="">全部来源</option>' + froms.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join('');
+    fr.value = froms.includes(keepF) ? keepF : '';
+  }
+  const ms = skillMeta.machines || [];
+  if (ms.join('|') !== mc.dataset.sig) {
+    mc.dataset.sig = ms.join('|');
+    mc.innerHTML = '<option value="">全部电脑</option>' + ms.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join('');
+    mc.value = ms.includes(keepM) ? keepM : '';
+  }
+}
 const SK_ST = { ok: ['s-done', '已装'], diff: ['s-running', '版本不同'], removed: ['s-stopped', '已删'], stale: ['s-failed', '旧版'], none: ['s-queued', '未装'] };
 function skillSize(n) { return n > 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + 'MB' : Math.max(1, Math.round(n / 1024)) + 'KB'; }
 function renderSkills() {
   const box = $('#sklist'); if (!box) return;
-  $('#skcount').textContent = skillList.length ? `共 ${skillList.length} 个` : '';
-  if (!skillList.length) { box.innerHTML = '<div class="empty">还没有共享的技能。在任何一台电脑的 <code>~/.workbuddy/skills/</code> 里放一个技能文件夹，几秒后就会自动出现在这里并分发给其它电脑。</div>'; return; }
+  fillSkillFilters();
+  const total = skillMeta.total || skillList.length;
+  const bits = [`共 <b>${total}</b> 个`];
+  if (skillMeta.matched !== total) bits.push(`匹配 <b>${skillMeta.matched}</b> 个`);
+  if (skillMeta.notAll) bits.push(`<span style="color:var(--amber)">${skillMeta.notAll} 个没装齐</span>`);
+  $('#skcount').innerHTML = bits.join('，');
+  if (!skillList.length) {
+    box.innerHTML = total
+      ? `<div class="empty">没有符合条件的技能。${skillQ ? `搜的是「${esc(skillQ)}」，` : ''}清掉筛选条件试试。</div>`
+      : '<div class="empty">还没有共享的技能。在任何一台电脑的 <code>~/.workbuddy/skills/</code> 里放一个技能文件夹，几秒后就会自动出现在这里并分发给其它电脑。</div>';
+    return;
+  }
   box.innerHTML = skillList.map(s => {
     const chips = Object.entries(s.states || {}).map(([n, v]) => {
       const c = SK_ST[v] || SK_ST.none;
       return `<span class="chip ${c[0]}" role="button" data-skm="${esc(n)}" data-skn="${esc(s.name)}" style="cursor:pointer" title="${esc(n)}：${c[1]}。点一下＝只从这台电脑上删掉（其它电脑不动，删过的不会自动装回，点「推送到全部」可装回）">${esc(n)} · ${c[1]}</span>`;
     }).join(' ');
+    const open = skillDetail === s.name;
     return `<div class="pm">
-      <div class="pmh"><b>${esc(s.name)}</b>
+      <div class="pmh"><b role="button" data-skopen="${esc(s.name)}" style="cursor:pointer" title="点开看这个技能里有哪些文件">${esc(s.name)} <span class="muted" style="font-weight:400">${open ? '▾' : '▸'}</span></b>
         <span class="meta">来自 ${esc(s.from || '?')} · ${skillSize(s.size)} · ${s.files} 个文件 · ${fmtT(s.updatedAt)}</span>
         <button class="mini ok" data-skpush="${esc(s.name)}" title="让所有电脑都装上：在这台上删过、没自动装的也装回来">推送到全部</button>
         <button class="mini danger" data-skdel="${esc(s.name)}" title="总控不再分发这个技能，各台电脑上已有的文件不动">停止共享</button>
         <button class="mini danger" data-skwipe="${esc(s.name)}" title="总控的条目和所有在线电脑上的文件都删掉">彻底删除</button></div>
+      ${open ? `<div class="skfiles" data-skfiles="${esc(s.name)}"><div class="muted">读取中…</div></div>` : ''}
       <div class="chips" style="margin-top:8px">${chips}</div>
     </div>`;
   }).join('');
+  // 展开文件清单
+  box.querySelectorAll('[data-skopen]').forEach(b => b.onclick = () => {
+    skillDetail = skillDetail === b.dataset.skopen ? null : b.dataset.skopen;
+    renderSkills();
+    if (skillDetail) loadSkillFiles(skillDetail);
+  });
+  // 列表每 5 秒自动刷一次，重绘会把展开的文件清单清成「读取中…」——重绘后自己补上
+  if (skillDetail && box.querySelector(`[data-skfiles="${skillDetail}"]`)) loadSkillFiles(skillDetail);
   box.querySelectorAll('[data-skpush]').forEach(b => b.onclick = async () => {
     b.disabled = true;
     try { await api('/api/skills/push', { method: 'POST', body: JSON.stringify({ id: b.dataset.skpush }) }); flash(b, '已推送'); await loadSkills(); }
@@ -1332,6 +1421,18 @@ function renderSkills() {
     try { await api('/api/skills/machine-del', { method: 'POST', body: JSON.stringify({ id: b.dataset.skn, machine: b.dataset.skm }) }); await loadSkills(); }
     catch (e) { alert('没删掉：' + e.message); }
   });
+}
+// 读某个技能的文件清单（展开时用）
+async function loadSkillFiles(name) {
+  const el = document.querySelector(`[data-skfiles="${name}"]`);
+  if (!el) return;
+  try {
+    const r = await api('/api/skills/' + encodeURIComponent(name));
+    const list = r.fileList || [];
+    if (!list.length) { el.innerHTML = '<div class="muted">读不到文件清单（总控上可能没有正文了）。</div>'; return; }
+    el.innerHTML = '<div class="fl">' + list.map((f) =>
+      `<div class="fr"><span class="fp" title="${esc(f.p)}">${esc(f.p)}</span><span class="fs">${f.size} B</span></div>`).join('') + '</div>';
+  } catch (e) { el.innerHTML = `<div class="muted">读不到：${esc(e.message)}</div>`; }
 }
 
 async function loadPrompts() {

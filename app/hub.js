@@ -1254,8 +1254,52 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, ids: r.made.map((t) => t.id), warn: r.warn, sched: s });
     }
     // ----- 技能共享：网页 -----
+    // 查询：?q=名字关键字 &from=来源电脑 &state=ok/diff/removed/none/stale &machine=只看这台 &missing=1 只看这台还没装的
     if (p === '/api/skills' && req.method === 'GET') {
-      return send(res, 200, { skills: skills.map(skillView) });
+      const q = String(u.searchParams.get('q') || '').trim().toLowerCase();
+      const from = String(u.searchParams.get('from') || '').trim();
+      const state = String(u.searchParams.get('state') || '').trim();
+      const machine = String(u.searchParams.get('machine') || '').trim();
+      const missing = u.searchParams.get('missing') === '1';
+      let list = skills.map(skillView);
+      if (q) list = list.filter((s) => s.name.toLowerCase().includes(q));
+      if (from) list = list.filter((s) => (s.from || '') === from);
+      if (state) list = list.filter((s) => Object.values(s.states || {}).includes(state));
+      if (machine) list = list.filter((s) => (s.states || {})[machine] && (missing ? s.states[machine] !== 'ok' : true));
+      // 「只看没装齐」：没指定电脑时，按在线的电脑算（离线的电脑传不了状态，算进来会误报）
+      if (missing && !machine) {
+        const onNames = [...machines.values()].filter(online).map((m) => m.name);
+        list = list.filter((s) => {
+          const rel = onNames.length ? onNames : Object.keys(s.states || {});
+          return rel.some((m) => (s.states || {})[m] !== 'ok');
+        });
+      }
+      // 统计：总数、几个在「在线的电脑」上还没装齐
+      // 离线电脑算进来没意义（它状态本来就是未知/未装），会变成每个技能都「没装齐」
+      const all = skills.map(skillView);
+      const onMachines = [...machines.values()].filter(online).map((m) => m.name);
+      const notAll = all.filter((s) => {
+        const rel = onMachines.length ? onMachines : Object.keys(s.states || {});
+        return rel.some((m) => (s.states || {})[m] !== 'ok');
+      }).length;
+      return send(res, 200, {
+        skills: list, total: all.length, matched: list.length, notAll,
+        froms: [...new Set(all.map((s) => s.from).filter(Boolean))].sort(),
+        machines: [...machines.keys()],
+        online: onMachines,
+      });
+    }
+    // 技能详情：看它里面有哪些文件
+    let skd = p.match(/^\/api\/skills\/([a-zA-Z0-9_.-]{1,80})$/);
+    if (skd && req.method === 'GET') {
+      const s = skills.find((x) => x.name === skillNameOk(skd[1]));
+      if (!s) return send(res, 404, { error: '没有这个共享技能' });
+      let flist = [];
+      try {
+        const j = JSON.parse(fs.readFileSync(skillFileOf(s.name), 'utf8'));
+        flist = (j.files || []).map((f) => ({ p: f.p, size: Math.round(Buffer.from(f.d || '', 'base64').length) }));
+      } catch { flist = []; }
+      return send(res, 200, { ...skillView(s), fileList: flist });
     }
     // 删共享条目：everywhere=false 只删总控的（各台电脑上文件不动）；
     // everywhere=true 连各台电脑上的一起删（离线的删不到，只把它标成「已删」）
