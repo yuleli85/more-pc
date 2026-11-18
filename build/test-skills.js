@@ -134,7 +134,7 @@ const skillList = () => api('/api/skills').then((r) => r.j.skills || []);
   pr = await poll('M-OLD', [{ name: 'my-skill', hash: h2, mtime: Date.now() }], { agentVersion: '1.10.1' });
   ok(pr.status === 200, '老版来问也正常');
   ok(!pr.j.skills, '老版不下发技能指令（它不认）');
-  ok(pr.j.agentV === '1.11.0', '老版能拿到新版本号去自升级');
+  ok(/^\d+\.\d+\.\d+$/.test(pr.j.agentV), '老版能拿到新版本号去自升级（' + pr.j.agentV + '）');
 
   console.log('\n[9] 技能页看到各台装到什么程度');
   await poll('M-A', [{ name: 'my-skill', hash: h2, mtime: Date.now() }]);

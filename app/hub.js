@@ -204,7 +204,7 @@ const byId = (id) => tasks.find((x) => x.id === id);
 // ---------- 专家 / 模型 ----------
 // 连接程序把这两个值拼到命令行上：--agent <专家> --model <模型>。
 // 只有 1.7.0 以后的连接程序才认这两个字段；老连接程序会当没看见，所以按版本卡住，不让它"静默跑错"。
-const AGENT_LATEST = '1.11.0';
+const AGENT_LATEST = '1.11.1';
 const AGENT_MIN = '1.7.0'; // 1.7.0 起支持指定专家/模型；1.8.0 起会回报本机可干活目录
 const AGENT_SESSION_MIN = '1.10.1'; // 1.10.0 起支持「接着指定会话」＋回报客户端会话 id
 const AGENT_SKILLS_MIN = '1.11.0';  // 1.11.0 起支持技能共享（自动上传 / 自动安装）
@@ -802,6 +802,37 @@ for (const s of scheds) {
 const skillDir = path.join(DATA_DIR, 'skills');
 fs.mkdirSync(skillDir, { recursive: true });
 const skillDels = new Map(); // 机器名 -> Set(技能名)：网页点了「删这台上的」，下次它来问捎过去
+// 上传熔断：某个技能在短时间内被反复要求重传超过阈值，就先歇一歇。
+// 正常情况下不该发生；发生了多半是两边 hash 规则不一致（死循环的最后一道保险）。
+// 阈值放宽松些：要 1 分钟内同一个技能被要求重传 20 次以上才算异常（正常改一次技能只算 1 次）。
+const skillStuck = new Map(); // 技能名 -> { n, until, at }
+// 「因冲突被要求重传」的记录：机器名|技能名 -> { uploads, sameContent }
+// 用来识别「两边 hash 规则不一致」这种死循环：它传上来的内容跟注册表逐字节一样，
+// 说明装的就是同一份东西，只是算 hash 的方式不同 —— 这时不该再让它反复传。
+const skillClash = new Map();
+function skillStuckHit(name) {
+  const s = skillStuck.get(name);
+  if (!s) return false;
+  if (Date.now() > s.until) { skillStuck.delete(name); return false; }
+  return true;
+}
+function skillStuckNote(name) {
+  const now = Date.now();
+  let s = skillStuck.get(name);
+  if (!s || now - s.at > 60000) { s = { n: 0, until: 0, at: now }; skillStuck.set(name, s); }
+  s.n++;
+  s.at = now;
+  if (s.n >= 20) { s.until = now + 10 * 60 * 1000; s.n = 0; console.log(`[技能] 「${name}」1 分钟内被要求重传 20 次，先歇 10 分钟（多半是两边算 hash 的规则不一致）`); }
+}
+// 「被要求重传」的频次（60 秒窗口）：超过 30 次就说明进了死循环
+const skillFreq = new Map(); // 技能名 -> { n, at }
+function skillFreqNote(name) {
+  const now = Date.now();
+  let s = skillFreq.get(name);
+  if (!s || now - s.at > 60000) { s = { n: 0, at: now }; skillFreq.set(name, s); }
+  s.n++; s.at = now;
+  return s.n;
+}
 // 「推送到全部」的强制标记存在技能条目自己的 forced 里（s.forced = { 机器名: true }），
 // 这样总控重启也不丢 —— 机器中途上线、还没装好，它上报的「删过」不会被当真。
 function queueSkillDel(machine, name) {
@@ -843,6 +874,16 @@ function skillCmdsFor(m, reported, removed) {
     if (n) rep.set(n, { hash: String((s && s.hash) || '').slice(0, 40), mtime: Math.round(+(s && s.mtime) || 0) });
   }
   m.skillHashes = Object.fromEntries([...rep].map(([n, r]) => [n, r.hash])); // 网页技能页显示各台装到什么程度用
+  // 这台上报过的 hash 留个底：万一两边算法不一致（排序规则不同），
+  // 每次上报的 hash 都跟注册表对不上 → 会陷入「上传→不一致→再上传」的死循环，
+  // 实测能把 hub 的 CPU 和日志盘烧满（22MB 日志、12 小时空转）。
+  m.skillSeen = m.skillSeen || {};
+  for (const [n, r] of rep) {
+    const seen = m.skillSeen[n] || [];
+    if (seen.length > 8) seen.shift();
+    if (seen[seen.length - 1] !== r.hash) seen.push(r.hash);
+    m.skillSeen[n] = seen;
+  }
   // 先处理「这台自己删过的」：记下来，之后不再自动装回（除非用户点「推送到全部」）
   // 必须在算 want 之前处理：这台删了就不会再出现在 skills 清单里，
   // 若先算 want 就会把它当成「没装」又装回去。
@@ -861,18 +902,40 @@ function skillCmdsFor(m, reported, removed) {
     const r = rep.get(s.name);
     s.installs = s.installs || {};
     const mine = s.installs[m.name] = s.installs[m.name] || {};
-    if (r && r.hash === s.hash) { mine.hash = s.hash; mine.at = Date.now(); mine.removed = false; if (s.forced) delete s.forced[m.name]; continue; } // 已是最新
+    if (r && r.hash === s.hash) { mine.hash = s.hash; mine.at = Date.now(); mine.removed = false; if (s.forced) delete s.forced[m.name]; skillStuck.delete(s.name); continue; } // 已是最新
     if (r) {
+      // 两边算 hash 的规则不一致（排序不同）时，这台上报的 hash 永远跟注册表对不上，
+      // 会陷入「上传→对不上→再上传」的死循环，把 CPU 和日志盘烧满（实测烧了 22MB 日志）。
+      // 保险：同一个技能连续几次都判成冲突 → 认定算法不一致，
+      //       直接把注册表这份下发过去纠正它（以注册表为准），不再要它重传。
+      const clashKey = m.name + '|' + s.name;
+      const clash = skillClash.get(clashKey) || { n: 0, uploads: 0, sameContent: false };
+      // 它是不是真的刚改过（文件修改时间明显新于注册表收录这份的时间）
+      const reallyChanged = (r.mtime || 0) > (s.updatedAt || 0) + 60000;
+      // 不管 mtime 怎么说，只要这个技能被「要求重传」得反常地多（多台机器 × 每 3 秒一次），
+      // 就认定是两边算 hash 的规则不同 —— 改为把注册表这份下发过去纠正它。
+      // 这个判据不依赖 mtime（装文件也会改 mtime，靠它判断不可靠），只看频次，最稳。
+      const freq = skillFreqNote(s.name);
+      if (freq >= 30 || (!reallyChanged && clash.n >= 2)) {
+        // 直接下发注册表这份纠正它，不再要它重传（否则会无限重传烧 CPU 和日志盘）
+        want.push(s.name);
+        skillClash.set(clashKey, clash);
+        continue;
+      }
+      clash.n++;
+      skillClash.set(clashKey, clash);
       // 这台上的版本和注册表不一样：就是注册表上一版 → 旧的，补装；
       // 比注册表还早 5 分钟以上 → 旧的，补装（留 5 分钟时钟误差）；
       // 刚改过（或时钟差在 5 分钟内）→ 以它为准，请它传上来。
       if (r.hash === s.prevHash || r.mtime + 300000 < s.updatedAt) { want.push(s.name); }
-      else get.push(s.name);
+      else { get.push(s.name); skillStuckNote(s.name); } // 要它重传 → 记一次（熔断用）
     } else if (!mine.removed) want.push(s.name); // 这台没有：自动装（在这台上删过的除外，删的不复活）
   }
   for (const [n, r] of rep) {
-    if (r.hash && !skills.some((x) => x.name === n)) get.push(n); // 这台新开发的技能：收上来共享
+    if (r.hash && !skills.some((x) => x.name === n)) get.push(n); // 这台新开发的技能：收上来共享（首次，不算异常）
   }
+  // 熔断：反复重传的技能先跳过，别把 CPU 和日志盘烧穿
+  const got = get.filter((n) => !skillStuckHit(n));
   const q = skillDels.get(m.name);
   if (q && q.size) { for (const n of q) del.push(n); q.clear(); }
   // 「推送到全部」：强制装回来。连接程序本地记着「删过」，光把注册表的标记清了不管用，
@@ -887,7 +950,7 @@ function skillCmdsFor(m, reported, removed) {
   }
   const out = {};
   if (want.length) out.want = [...new Set(want)];
-  if (get.length) out.get = [...new Set(get)];
+  if (got.length) out.get = [...new Set(got)];
   if (del.length) out.del = [...new Set(del)];
   return Object.keys(out).length ? out : null;
 }
@@ -1101,7 +1164,14 @@ const server = http.createServer(async (req, res) => {
       if (!agentSkillsSupports(m)) return send(res, 200, { ok: true, skills: null, agentV: AGENT_LATEST });
       m.skillCmds = skillCmdsFor(m, (Array.isArray(b.skills) ? b.skills : []).slice(0, 100), Array.isArray(b.removed) ? b.removed.slice(0, 100) : []);
       const sc = m.skillCmds; m.skillCmds = null;
-      if (sc) console.log(`[技能] ${name}：${sc.want && sc.want.length ? '装 ' + sc.want.join('、') : ''}${sc.get && sc.get.length ? ' 传 ' + sc.get.join('、') : ''}${sc.del && sc.del.length ? ' 删 ' + sc.del.join('、') : ''}`);
+      // 日志别刷屏：同一台机器反复下发同一批技能指令，只在内容变了或间隔久了才记一行
+      const sig = sc ? JSON.stringify(sc) : '';
+      const lastSig = m.skillLogSig || '';
+      const lastAt = m.skillLogAt || 0;
+      if (sc && (sig !== lastSig || Date.now() - lastAt > 60000)) {
+        m.skillLogSig = sig; m.skillLogAt = Date.now();
+        console.log(`[技能] ${name}：${sc.want && sc.want.length ? '装 ' + sc.want.join('、') : ''}${sc.get && sc.get.length ? ' 传 ' + sc.get.join('、') : ''}${sc.del && sc.del.length ? ' 删 ' + sc.del.join('、') : ''}`);
+      }
       return send(res, 200, { ok: true, skills: sc || undefined, agentV: AGENT_LATEST });
     }
     // ----- 技能共享：连接程序上传正文 -----
@@ -1123,17 +1193,34 @@ const server = http.createServer(async (req, res) => {
       if (skillBytes(files) > SKILL_BYTES_MAX) return send(res, 400, { error: '技能超过 2MB，不同步（看看是不是把别的东西放进技能文件夹了）' });
       const hash = skillHash(files);
       let s = skills.find((x) => x.name === name);
+      // 注意：这里**不能**清熔断计数 —— 死循环时每 3 秒就上传一次，一清就永远达不到阈值。
+      // 真正同步完成的标志是「这台上报的 hash 跟注册表一致」，那时候再清（见 skillCmdsFor）。
+      // 跟注册表里那份比一比：内容一模一样吗？（只有内容一样、hash 不一样，
+      // 才是「两边算 hash 的规则不同」；内容不同就是真改了）
+      const ck = from + '|' + name;
+      if (s) {
+        let same = false;
+        try {
+          const old = JSON.parse(fs.readFileSync(skillFileOf(name), 'utf8'));
+          const oldMap = new Map((old.files || []).map((f) => [f.p, f.d]));
+          same = old.files.length === files.length
+            && files.every((f) => oldMap.get(f.p) === f.d);
+        } catch { same = false; }
+        const c = skillClash.get(ck) || { n: 0, uploads: 0, sameContent: false };
+        c.uploads++; c.sameContent = same;
+        skillClash.set(ck, c);
+      }
       if (s && s.hash === hash) { // 内容没变：只把这台标记成「已装最新」
         (s.installs = s.installs || {})[from] = { hash, at: Date.now(), removed: false };
         save();
-        return send(res, 200, { ok: true, same: true });
+        return send(res, 200, { ok: true, same: true, hash });
       }
       fs.writeFileSync(skillFileOf(name), JSON.stringify({ name, hash, files }));
       if (!s) { s = { name, installs: {} }; skills.push(s); if (skills.length > SKILLS_MAX) skills.splice(0, skills.length - SKILLS_MAX); }
       Object.assign(s, { prevHash: s.hash || '', hash, from, size: skillBytes(files), updatedAt: Date.now(), fileCount: files.length });
       console.log(`[技能] ${from} 上传了「${name}」（${s.fileCount} 个文件，${Math.round(s.size / 1024)}KB），其它电脑下次来问就自动装上`);
       saveNow();
-      return send(res, 200, { ok: true });
+      return send(res, 200, { ok: true, hash });
     }
     // ----- 技能共享：连接程序下载正文 -----
     if (p === '/api/agent/skill' && req.method === 'GET') {

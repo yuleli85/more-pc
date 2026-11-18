@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync, execFile, execFileSync } = require('child_process');
 
-const VERSION = '1.11.0';
+const VERSION = '1.11.1';
 const arg = (k) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : undefined; };
 const CFG = arg('config') ? JSON.parse(fs.readFileSync(arg('config'), 'utf8').replace(/^\uFEFF/, '')) : {};
 const HUB = (arg('hub') || CFG.hub || process.env.FLEET_HUB || '').replace(/\/$/, '');
@@ -169,6 +169,10 @@ const SKILL_FILES_MAX = 200;     // 单个技能最多 200 个文件
 // 为什么要记：用户手动删掉的技能，总控不该再自动装回来（用户定的规矩：删除不自动同步）。
 // 只记「删过」这一事实，等这个技能在总控那边被改了内容，才会重新装。
 const SKILL_REMOVED_FILE = path.join(os.homedir(), '.workbuddy', '.wb-skills-removed.json');
+// 技能 hash 的对齐记录：名字 -> { hash: 总控认可的, own: 本机内容自己算的 }
+// 两边 hash 规则必须一致，否则会互相认为「对方是旧版」而无限重传（实测烧掉 22MB 日志）。
+// 用法：内容没变 → 上报总控那个 hash（对齐）；内容变了（own 变了）→ 上报自己算的新值，让总控收新版。
+const SKILL_HASH_FIX = new Map();
 function readRemoved() {
   try { const j = JSON.parse(fs.readFileSync(SKILL_REMOVED_FILE, 'utf8')); return Array.isArray(j) ? j : []; }
   catch { return []; }
@@ -186,6 +190,10 @@ function clearRemoved(name) {
   const i = l.indexOf(name);
   if (i >= 0) { l.splice(i, 1); writeRemoved(l); }
 }
+// 技能里有哪些文件（相对路径，用 / 分隔）
+// 注意：这里只负责「列出」，不做排序 —— 排序统一由 skillHash 里的「按完整路径排序」决定。
+// 千万别按目录逐层排序：那样「演示项目」和「演示项目-审计结果」这类目录的顺序，
+// 会跟总控那边（按完整路径字符串排序）不一样 → 两边算出的 hash 永远不同 → 无限重传。
 function skillFiles(root, base = '') {
   const out = [];
   let es = [];
@@ -199,9 +207,15 @@ function skillFiles(root, base = '') {
   }
   return out;
 }
+// 版本 hash：必须和总控那边算法一模一样 —— 按相对路径字符串排序后，
+// 依次喂入「路径 + \0 + 文件内容」。两边差一个字节都会导致互相认为对方是旧版、无限重传。
+function skillHashOf(pairs) {
+  const h = crypto.createHash('sha256');
+  for (const p of [...pairs].sort((a, b) => (a.p < b.p ? -1 : 1))) { h.update(p.p); h.update('\0'); h.update(p.buf); }
+  return h.digest('hex').slice(0, 20);
+}
 function scanSkills() {
   const out = [];
-  const removed = new Set(readRemoved());
   let ds = [];
   try { ds = fs.readdirSync(SKILLS_ROOT, { withFileTypes: true }); } catch { return out; }
   for (const d of ds) {
@@ -209,7 +223,7 @@ function scanSkills() {
     const dir = path.join(SKILLS_ROOT, d.name);
     const files = skillFiles(dir);
     if (!files.length || files.length > SKILL_FILES_MAX) continue;
-    const h = crypto.createHash('sha256');
+    const pairs = [];
     let size = 0, newest = 0, tooBig = false;
     try {
       for (const rel of files) {
@@ -217,11 +231,18 @@ function scanSkills() {
         size += st.size;
         if (st.mtimeMs > newest) newest = st.mtimeMs;
         if (size > SKILL_BYTES_MAX) { tooBig = true; break; }
-        h.update(rel); h.update('\0'); h.update(fs.readFileSync(path.join(dir, rel)));
+        pairs.push({ p: rel, buf: fs.readFileSync(path.join(dir, rel)) });
       }
     } catch { continue; } // 正在被人改写，这轮先跳过
     if (tooBig || !size) continue;
-    out.push({ name: d.name, hash: h.digest('hex').slice(0, 20), mtime: Math.round(newest), size });
+    const own = skillHashOf(pairs);
+    // 上次记的（总控认可的）hash：只用来判断「内容有没有变」。
+    // 内容变了 → 用自己算的新值上报，让总控收新版；
+    // 内容没变 → 用总控那个值上报，两边对齐，不会互相认为「对方是旧版」。
+    const last = SKILL_HASH_FIX.get(d.name);
+    const hash = (last && last.own && last.own !== own) ? own : (last && last.hash) || own;
+    SKILL_HASH_FIX.set(d.name, { hash, own });
+    out.push({ name: d.name, hash, mtime: Math.round(newest), size });
   }
   return out;
 }
@@ -265,7 +286,13 @@ async function skillUpload(rawName) {
     files.push({ p: rel, d: buf.toString('base64') });
   }
   if (!files.length) return;
-  await api('/api/agent/skill', { name, from: NAME, files }, 60000);
+  // 上传后以总控回传的 hash 为准：两边算 hash 的规则要是一致，
+  // 否则会互相认为「对方是旧版」而无限重传（实测烧掉几十 GB 日志）。
+  // 用总控的值，本机上报时也用它，两边就对齐了。
+  try {
+    const r = await api('/api/agent/skill', { name, from: NAME, files }, 60000);
+    if (r && r.hash) { const old = SKILL_HASH_FIX.get(name) || {}; SKILL_HASH_FIX.set(name, { hash: r.hash, own: old.own }); }
+  } catch {}
 }
 // 从总控下载一份技能装到本机（先删掉旧的再写，保证和共享版完全一致）
 async function skillInstall(rawName) {
@@ -274,7 +301,11 @@ async function skillInstall(rawName) {
   try {
     const r = await fetch(HUB + '/api/agent/skill?name=' + encodeURIComponent(name), { headers: { 'x-fleet-key': KEY } });
     const j = await r.json().catch(() => ({}));
-    if (r.ok && Array.isArray(j.files) && j.files.length && j.files.every((f) => skillPathOk(f.p))) skillWrite(name, j.files);
+    if (r.ok && Array.isArray(j.files) && j.files.length && j.files.every((f) => skillPathOk(f.p))) {
+      skillWrite(name, j.files);
+      // 装的就是总控那份 → 用总控的 hash（两边规则必须一致，否则会互相认为「对方是旧版」）
+      if (j.hash) { const old = SKILL_HASH_FIX.get(name) || {}; SKILL_HASH_FIX.set(name, { hash: j.hash, own: old.own }); }
+    }
   } catch { /* 网络不通下次再试，不挡着领活 */ }
 }
 function skillWrite(name, files) {
@@ -287,6 +318,12 @@ function skillWrite(name, files) {
   }
   clearRemoved(name); // 装回来了就不用再记「删过」
   SKILL_GONE.delete(name);
+  // 记下这份内容自己算的 hash：以后用户改了文件，跟它一比就知道变了
+  try {
+    const pairs = [];
+    for (const rel of skillFiles(dir)) pairs.push({ p: rel, buf: fs.readFileSync(path.join(dir, rel)) });
+    if (pairs.length) { const old = SKILL_HASH_FIX.get(name) || {}; SKILL_HASH_FIX.set(name, { hash: old.hash, own: skillHashOf(pairs) }); }
+  } catch {}
   skillsAt = 0; // 装完立刻重扫，下次上报的就是新版本，总控不会重复催
 }
 // 删掉：记下「这台删过」，总控就不会自动装回来（用户定的规矩）
