@@ -200,6 +200,18 @@
   .rhead { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
   .rhead b { color:var(--text); font-size:13.5px; }
   .rtext { white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.75; color:var(--text2); background:#fcfdff; border-radius:var(--r-sm); padding:10px 12px; }
+  /* 交付清单：产出/改动的文件 */
+  .rfiles { margin-top:10px; border:1px solid #e3edfb; border-radius:10px; background:linear-gradient(180deg,#f7fbff,#fff); overflow:hidden; }
+  .rfiles .fh { display:flex; align-items:center; gap:6px; padding:8px 11px; font-size:12px; color:var(--sub); border-bottom:1px solid #e9f0fa; background:#f4f9ff; }
+  .rfiles .fh b { color:var(--text); font-weight:600; font-size:12.5px; }
+  .rfiles ul { margin:0; padding:7px 11px 9px 26px; max-height:260px; overflow:auto; }
+  .rfiles li { font-size:12px; color:#3b4a61; line-height:1.75; word-break:break-all; margin-bottom:4px; }
+  .rfiles .fl1 { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .rfiles .fp { font-family:ui-monospace,Menlo,Consolas,monospace; font-weight:600; color:var(--text); }
+  .rfiles .fdir { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#93a3b8; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; }
+  .rfiles .fs { flex:none; color:#93a3b8; font-size:11px; }
+  .rfiles .fprev { margin:5px 0 2px; padding:9px 11px; background:#fcfdff; border:1px solid #e9f0fa; border-radius:8px; font-size:11.5px; line-height:1.7; white-space:pre-wrap; word-break:break-word; max-height:280px; overflow:auto; color:#3b4a61; font-family:ui-monospace,Menlo,Consolas,monospace; }
+  .rfiles .fnone { padding:9px 11px; font-size:12px; color:var(--muted); }
 
   /* ---------- 登录 ---------- */
   body:has(.login) { background:radial-gradient(1100px 560px at 50% -8%,#dbeafe 0%,#eff6ff 42%,#f7fafd 78%); }
@@ -1548,7 +1560,12 @@ function renderTasks() {
     else if (!runs.length) { ov = { cls: 's-stopped', txt: t.stopped ? '已停' : '待派' }; }
     else if (busyN) { ov = { cls: 's-running', txt: badN ? '部分没成' : '进行中' }; prog = `${doneN + badN}/${runs.length}`; }
     else if (badN) { ov = { cls: 's-failed', txt: '没成' }; prog = `${doneN}/${runs.length}`; }
-    else { ov = { cls: 's-done', txt: '完成' }; prog = `${runs.length}/${runs.length}`; }
+    else {
+      // 标「完成」但一台结果都没带回来 → 提醒一下，别让人以为真拿到东西了
+      const empty = runs.every(([, r]) => !r.hasResult && !(r.files || []).length);
+      ov = empty ? { cls: 's-failed', txt: '完成·无结果' } : { cls: 's-done', txt: '完成' };
+      prog = `${runs.length}/${runs.length}`;
+    }
     const tags = (t.mode === 'pool' ? `<span class="chip p${t.prio}">${['紧急','重要','加大力度发展'][t.prio]}</span>` : '')
       + (t.src ? '<span class="chip">飞书表</span>' : '')
       + (t.schedName ? `<span class="chip" title="这条是定时任务到点自动发的：${esc(t.schedName)}">定时</span>` : '')
@@ -1606,6 +1623,61 @@ function runResultText(r) {
   if (r.error && r.error.trim()) return r.error.trim();
   return (r.items || []).filter(i => i.t === 'text').map(i => i.s).filter(Boolean).join('\n').trim();
 }
+// 没有结果时给个能落地的说法：别只写「没有输出」，要说清去哪看
+function emptyResultTip(r) {
+  if (!r) return '';
+  const busy = ['queued', 'sent', 'running'].includes(r.status);
+  if (busy) return '（还在干，等它出结果）';
+  if ((r.files || []).length) return '（这台没有文字说明，但有产出文件，见下面）';
+  if (r.via === 'client') return '（这台跑完了但没带回文字。到那台电脑打开 WorkBuddy →「自动化」，找到同名任务看这一轮的完整过程和产出）';
+  if (r.via === 'cli') return '（这台跑完了但没带回文字。到那台电脑的终端里翻一下输出，或重发一次并勾上「代码用 Git 同步」保留改动）';
+  return '（没有输出）';
+}
+// 「交付在哪」：这台产出/改动了哪些文件
+// files 里可能带内容（小文件），点开就能看、能复制、能下载
+function filesBlock(r) {
+  const fs_ = (r && r.files) || [];
+  if (!fs_.length) return '';
+  const items = fs_.map((f) => {
+    const p = typeof f === 'string' ? f : (f && f.p) || '';
+    const txt = (typeof f === 'object' && f && f.text) || '';
+    const size = (typeof f === 'object' && f && f.size >= 0) ? f.size : -1;
+    const sizeTxt = size < 0 ? '' : ` · ${size > 1024 ? Math.round(size / 1024) + 'KB' : size + 'B'}`;
+    return `<li>
+      <div class="fl1"><span class="fp" title="${esc(p)}">${esc(p.split(/[\\/]/).pop() || p)}</span><span class="fdir" title="${esc(p)}">${esc(p)}</span><span class="fs">${esc(sizeTxt)}</span>
+        ${txt ? `<button class="mini" data-fview="${esc(p)}" title="看这个文件的内容">看内容</button><button class="mini" data-fcopy="${esc(p)}">复制</button><button class="mini" data-fdl="${esc(p)}">下载</button>` : `<span class="fs">（内容太大或不是文本，去那台电脑上看）</span>`}
+      </div>
+      ${txt ? `<pre class="fprev" data-fprev="${esc(p)}" style="display:none">${esc(txt)}</pre>` : ''}
+    </li>`;
+  }).join('');
+  return `<div class="rfiles">
+    <div class="fh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><b>交付文件 ${fs_.length} 个</b><span>（在那台电脑上，小文件能直接看/存）</span></div>
+    <ul>${items}</ul>
+  </div>`;
+}
+// 绑文件按钮：看内容 / 复制 / 下载
+function bindFileBtns(root, r) {
+  const files = (r && r.files) || [];
+  const get = (p) => files.find((f) => (typeof f === 'string' ? f : f.p) === p);
+  root.querySelectorAll('[data-fview]').forEach(b => b.onclick = () => {
+    const pre = root.querySelector(`[data-fprev="${CSS.escape(b.dataset.fview)}"]`);
+    if (pre) { pre.style.display = pre.style.display === 'none' ? '' : 'none'; b.textContent = pre.style.display === 'none' ? '看内容' : '收起'; }
+  });
+  root.querySelectorAll('[data-fcopy]').forEach(b => b.onclick = async () => {
+    const f = get(b.dataset.fcopy);
+    try { await copyText((f && f.text) || ''); flash(b); } catch { alert('复制没成功，请手动选中复制'); }
+  });
+  root.querySelectorAll('[data-fdl]').forEach(b => b.onclick = () => {
+    const f = get(b.dataset.fdl);
+    if (!f || !f.text) return;
+    const blob = new Blob([f.text], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (f.p.split(/[\\/]/).pop() || '交付.txt');
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  });
+}
 // 这件任务在各台上的结果合成一段：抬头写清楚是什么活，下面按电脑分段
 function allResultText(d) {
   const head = [`任务：${d.prompt}`, `时间：${fmtT(d.createdAt)}`]
@@ -1614,7 +1686,7 @@ function allResultText(d) {
     .concat(d.model ? [`模型：${d.model}`] : []).join('\n');
   const body = Object.entries(d.runs).map(([n, r]) => {
     const st = (ST[r.status] || r.status) + (r.startedAt && r.endedAt ? ' · ' + dur(r.startedAt, r.endedAt) : '');
-    const txt = runResultText(r) || (['queued', 'sent', 'running'].includes(r.status) ? '（还在干）' : '（没有输出）');
+    const txt = runResultText(r) || emptyResultTip(r);
     return `──── ${n} · ${st} ────\n${txt}`;
   }).join('\n\n');
   return head + '\n\n' + (body || '（还没有电脑接手）');
@@ -1665,7 +1737,7 @@ function paintResult() {
     .concat(d.session ? ['接会话 ' + esc(String(d.session).slice(0, 8))] : [])
     .join(' · ');
   const blocks = runs.length ? runs.map(([n, r]) => {
-    const txt = runResultText(r) || (busy.includes(r.status) ? '（还在干，等它出结果）' : '（没有输出）');
+    const txt = runResultText(r) || emptyResultTip(r);
     return `<div class="rblk">
       <div class="rhead"><b>${esc(n)}</b><span class="chip s-${r.status}">${ST[r.status] || r.status}</span>
         <span class="muted">${dur(r.startedAt, r.endedAt)}</span>
@@ -1673,6 +1745,7 @@ function paintResult() {
         ${r.via === 'client' ? '<span class="chip">客户端跑的</span>' : r.via === 'cli' ? '<span class="chip">命令行跑的</span>' : ''}
         <button class="mini" data-rcopy="${esc(n)}" style="margin-left:auto">复制这台</button>
       </div>
+      ${filesBlock(r)}
       <div class="rtext" style="${r.status === 'failed' ? 'color:var(--red)' : ''}">${esc(txt)}</div>
     </div>`;
   }).join('') : '<div class="empty" style="margin-top:10px">还没有电脑接手。</div>';
@@ -1690,8 +1763,10 @@ function paintResult() {
   };
   box.querySelectorAll('[data-rcopy]').forEach(b => b.onclick = async () => {
     const r = d.runs[b.dataset.rcopy]; if (!r) return;
-    try { await copyText(runResultText(r) || '（没有输出）'); flash(b); } catch { alert('复制没成功，请手动选中文字复制'); }
+    try { await copyText(runResultText(r) || emptyResultTip(r)); flash(b); } catch { alert('复制没成功，请手动选中文字复制'); }
   });
+  // 交付文件：看内容 / 复制 / 下载
+  for (const [, r] of Object.entries(d.runs || {})) bindFileBtns(box, r);
   if (resTimer) { clearTimeout(resTimer); resTimer = null; }
   if (live) resTimer = setTimeout(() => { resTimer = null; pullResult(); }, 2000);
 }
@@ -1715,11 +1790,14 @@ function renderDetail() {
         ${['queued','sent','running'].includes(r.status) ? `<button data-stop="${esc(n)}">停</button>` : ''}</div>
       ${r.session ? `<div class="muted" style="margin:0 0 4px">会话 ${esc(r.session)} <button class="mini" data-csessid="${esc(r.session)}">复制</button>${r.via ? ' · ' + (r.via === 'client' ? '客户端执行' : '命令行执行') : ''}</div>` : ''}
       ${r.dir ? `<div class="muted" style="margin:0 0 4px">实际目录 ${esc(r.dir)}</div>` : ''}
+      ${filesBlock(r)}
       ${r.expertNote ? `<div class="muted" style="margin:0 0 4px;color:var(--amber)">${esc(r.expertNote)}</div>` : ''}
       ${r.modelNote ? `<div class="muted" style="margin:0 0 4px;color:var(--amber)">${esc(r.modelNote)}</div>` : ''}
       <div class="body" data-n="${esc(n)}">${r.items.map(i => `<div class="it ${i.t}">${esc(i.s)}</div>`).join('') || (r.status === 'queued' ? '<div class="it info">' + (d.mode === 'pool' ? '派给这台了，马上开始…' : '等这台手上的活干完再开始…') + '</div>' : '')}
         ${r.result ? `<div class="result">${esc(r.result)}</div>` : ''}${r.error ? `<div class="result bad">${esc(r.error)}</div>` : ''}</div></div>`).join('')}</div></div>`;
   document.querySelectorAll('.run .body').forEach(b => { if (scroll[b.dataset.n] !== false) b.scrollTop = b.scrollHeight; });
+  // 交付文件：看内容 / 复制 / 下载
+  for (const [, r] of Object.entries(d.runs || {})) bindFileBtns(document.getElementById('detail'), r);
   const stopAll = $('#stopAll'); if (stopAll) stopAll.onclick = () => api(`/api/tasks/${d.id}/stop`, { method:'POST', body:'{}' }).then(loadDetail);
   document.querySelectorAll('[data-stop]').forEach(b => b.onclick = () => api(`/api/tasks/${d.id}/stop`, { method:'POST', body: JSON.stringify({ name: b.dataset.stop }) }).then(loadDetail));
   // 复制：每台的执行结果各一个按钮，再加一个「全部结果」合成一段

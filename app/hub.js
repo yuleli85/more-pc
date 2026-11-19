@@ -234,7 +234,7 @@ const byId = (id) => tasks.find((x) => x.id === id);
 // ---------- 专家 / 模型 ----------
 // 连接程序把这两个值拼到命令行上：--agent <专家> --model <模型>。
 // 只有 1.7.0 以后的连接程序才认这两个字段；老连接程序会当没看见，所以按版本卡住，不让它"静默跑错"。
-const AGENT_LATEST = '1.11.1';
+const AGENT_LATEST = '1.11.2';
 const AGENT_MIN = '1.7.0'; // 1.7.0 起支持指定专家/模型；1.8.0 起会回报本机可干活目录
 const AGENT_SESSION_MIN = '1.10.1'; // 1.10.0 起支持「接着指定会话」＋回报客户端会话 id
 const AGENT_SKILLS_MIN = '1.11.0';  // 1.11.0 起支持技能共享（自动上传 / 自动安装）
@@ -559,7 +559,7 @@ const summary = (t) => ({
   schedName: t.schedName || '', schedId: t.schedId || '',
   after: t.after || '', afterPrompt: t.after && byId(t.after) ? byId(t.after).prompt.slice(0, 60) : '', git: !!t.git,
   expert: t.expert || '', model: t.model || '',
-  runs: Object.fromEntries(Object.entries(t.runs).map(([n, r]) => [n, { status: r.status, startedAt: r.startedAt, endedAt: r.endedAt, error: r.error, dir: r.dir || '', session: r.session || '', via: r.via || '', expertNote: r.expertNote || '', modelNote: r.modelNote || '', last: lastText(r) }])),
+  runs: Object.fromEntries(Object.entries(t.runs).map(([n, r]) => [n, { status: r.status, startedAt: r.startedAt, endedAt: r.endedAt, error: r.error, dir: r.dir || '', session: r.session || '', via: r.via || '', expertNote: r.expertNote || '', modelNote: r.modelNote || '', files: (r.files || []).map((f) => (typeof f === 'string' ? { p: f, size: -1 } : { p: f.p, size: f.size, text: (f.text || '').slice(0, 200000) })), hasResult: !!(r.result && r.result.trim()) || (r.files || []).length > 0, last: lastText(r) }])),
 });
 // 会话索引：每次跑完都会把会话 id 记在 run 上（客户端通道和命令行通道都记）。
 // 前端选「接着哪个会话」时就用它，不去翻各台的 workbuddy.db，零额外开销。
@@ -1165,6 +1165,22 @@ const server = http.createServer(async (req, res) => {
         r.result = String(b.result || '').slice(0, 50000);
         r.error = b.ok ? '' : friendlyHubError(String(b.error || '').slice(0, 2000), r.dir);
         r.cost = b.cost; r.endedAt = Date.now();
+        // 这件活产出/改了哪些文件 —— 「交付在哪」就看这个
+        if (Array.isArray(b.files) && b.files.length) {
+          r.files = b.files.slice(0, 60).map((f) => {
+            if (typeof f === 'string') return { p: String(f).slice(0, 300), size: -1 };
+            const o = f && typeof f === 'object' ? f : {};
+            return {
+              p: String(o.p || '').slice(0, 300),
+              size: Number(o.size) || -1,
+              text: typeof o.text === 'string' ? o.text.slice(0, 200000) : '',
+            };
+          }).filter((f) => f.p);
+        }
+        // 跑完了却一个字都没有：说清楚，别让人以为白跑了
+        if (b.ok && !r.result.trim() && !(r.files || []).length) {
+          r.error = '这台说完成了，但没带回任何结果（到那台电脑的 WorkBuddy「自动化」里看这一轮的过程）';
+        }
         if (m && m.busy === t.id) m.busy = null;
         // 命令行没登录：这台在登录好之前跑什么都白跑，记下来在网页上说清楚，别让人一直等
         if (m) {
@@ -1485,7 +1501,7 @@ const server = http.createServer(async (req, res) => {
       const t = tasks.find((x) => x.id === mt[1]);
       if (!t) return send(res, 404, { error: '没有这件任务' });
       const since = +(u.searchParams.get('since') || 0);
-      return send(res, 200, { ...summary(t), prompt: t.prompt, runs: Object.fromEntries(Object.entries(t.runs).map(([n, r]) => [n, { ...r, items: r.items.filter((i) => i.at > since) }])) });
+      return send(res, 200, { ...summary(t), prompt: t.prompt, runs: Object.fromEntries(Object.entries(t.runs).map(([n, r]) => [n, { ...r, hasResult: !!(r.result && r.result.trim()) || (r.files || []).length > 0, items: r.items.filter((i) => i.at > since) }])) });
     }
     mt = p.match(/^\/api\/tasks\/([a-f0-9]+)\/stop$/);
     if (mt && req.method === 'POST') {

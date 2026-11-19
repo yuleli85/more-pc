@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync, execFile, execFileSync } = require('child_process');
 
-const VERSION = '1.11.1';
+const VERSION = '1.11.2';
 const arg = (k) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : undefined; };
 const CFG = arg('config') ? JSON.parse(fs.readFileSync(arg('config'), 'utf8').replace(/^\uFEFF/, '')) : {};
 const HUB = (arg('hub') || CFG.hub || process.env.FLEET_HUB || '').replace(/\/$/, '');
@@ -505,12 +505,13 @@ async function flush(cur, done, extra = {}) {
   if (!cur) return;
   const items = cur.buf.splice(0, cur.buf.length);
   if (!items.length && !done) return;
+  if (done) log('交结果回去：任务 ' + cur.id + ' ok=' + extra.ok + ' 结果' + String(extra.result || '').length + '字');
   try {
     const j = await api('/api/agent/events', { name: NAME, jobId: cur.id, items, session: cur.session, via: cur.via || '', done, ...extra });
     if (j.cancel && !done) stop();
   } catch (e) {
     cur.buf.unshift(...items); // 网络不通先攒着，下次一起补
-    if (done) throw e;
+    if (done) { log('结果没交回去：' + (e && e.message ? e.message : e)); throw e; }
   }
 }
 
@@ -677,10 +678,149 @@ function wbStat(id) {
 function wbOutput(id) {
   const code = `
     const r=db.prepare("select runs_json from automation_runs where automation_id=? order by created_at desc limit 1").get(${JSON.stringify(id)});
-    let out='',ok=null,cid='';try{const a=JSON.parse(r.runs_json||'[]');const x=a[0]||{};out=x.output||'';ok=x.success===undefined?null:!!x.success;cid=x.conversationId||x.conversation_id||x.sessionId||x.session_id||''}catch(e){}
-    console.log(JSON.stringify({ok:ok,output:String(out).slice(0,60000),cid:String(cid)}));
+    let out='',ok=null,cid='',title='',state='',err='';try{const a=JSON.parse(r.runs_json||'[]');const x=a[0]||{};
+      // 新版客户端的结果字段：output / runResult.output / result 都要试
+      out=x.output||x.result||'';
+      if(typeof out!=='string') out=JSON.stringify(out);
+      if(!out && x.runResult && typeof x.runResult==='object') out=x.runResult.output||x.runResult.text||x.runResult.content||'';
+      ok=x.success===undefined?null:!!x.success;
+      cid=x.conversationId||x.conversation_id||x.sessionId||x.session_id||'';
+      title=x.resultTitle||''; state=x.resultState||''; err=x.error||'';
+    }catch(e){}
+    console.log(JSON.stringify({ok:ok,output:String(out||'').slice(0,60000),cid:String(cid),title:String(title),state:String(state),error:String(err)}));
   `;
-  try { return JSON.parse(wbRun(code, 25000)); } catch { return { ok: null, output: '', cid: '' }; }
+  try { return JSON.parse(wbRun(code, 25000)); } catch { return { ok: null, output: '', cid: '', title: '', state: '', error: '' }; }
+}
+
+// ---------- 客户端会话的真实输出 ----------
+// 客户端把每轮对话存在 ~/.workbuddy/projects/<目录slug>/<会话id>.jsonl 里，
+// 但 automation_runs 里只记了会话 id，真正的话在那个 jsonl 中。
+// 早期版本只读 runs_json[0].output —— 那个字段客户端根本不写 → 结果永远是空的。
+// 现在去会话文件里把 assistant 的最终答复取出来。
+const WB_PROJECTS = path.join(os.homedir(), '.workbuddy', 'projects');
+// 工作目录 → 会话目录名。客户端的规则（看真实目录名）：
+//   C:\Users\Administrator\WorkBuddy\写书 → c-Users-Administrator-WorkBuddy-写书
+//   E:/workspaces/dev/Octop                 → e-workspaces-dev-Octop
+// 即：盘符小写、冒号和斜杠都变成横线、连续横线合并成一个。
+function projSlug(cwd) {
+  let s = String(cwd || '').replace(/\\/g, '/').replace(/:/g, '/');
+  s = s.replace(/\/+/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  s = s.replace(/\//g, '-').replace(/-+/g, '-');
+  // 盘符小写（只有开头的单个字母是盘符，Mac 的 /Users 不能动）
+  if (/^[a-zA-Z]-/.test(s)) s = s[0].toLowerCase() + s.slice(1);
+  return s || 'default';
+}
+// 从会话 jsonl 里提取 assistant 的文字输出（最后一轮为主）
+function sessionTexts(jsonlPath) {
+  const out = [];
+  let txt = '';
+  try { txt = fs.readFileSync(jsonlPath, 'utf8'); } catch { return out; }
+  for (const line of txt.split('\n')) {
+    if (!line.trim()) continue;
+    let o; try { o = JSON.parse(line); } catch { continue; }
+    if (o.type === 'message' && o.role === 'assistant' && Array.isArray(o.content)) {
+      for (const c of o.content) {
+        if ((c.type === 'output_text' || c.type === 'text') && c.text && c.text.trim()) out.push(c.text.trim());
+      }
+    }
+  }
+  return out;
+}
+// 找会话文件：先按目录 slug 找，找不到就在所有目录里按会话 id 找
+function findSessionFile(cid, cwd) {
+  if (!cid) return null;
+  const dirs = [];
+  const guess = path.join(WB_PROJECTS, projSlug(cwd));
+  if (fs.existsSync(guess)) dirs.push(guess);
+  try { for (const d of fs.readdirSync(WB_PROJECTS)) { const p = path.join(WB_PROJECTS, d); if (!dirs.includes(p)) dirs.push(p); } } catch {}
+  for (const d of dirs) {
+    const f = path.join(d, cid + '.jsonl');
+    try { if (fs.existsSync(f)) return f; } catch {}
+  }
+  return null;
+}
+// 取客户端这次跑的最终答复
+function clientResult(cid, cwd) {
+  const f = findSessionFile(cid, cwd);
+  if (!f) return { text: '', files: [] };
+  const texts = sessionTexts(f);
+  // 最后一轮 assistant 的话最接近最终答复；太短就把前几轮也带上（前面往往是分析过程）
+  const last = texts.length ? texts[texts.length - 1] : '';
+  const text = last.length >= 40 ? last : texts.join('\n\n');
+  // 产出文件：小文件带内容回来，用户在网页上直接能看能存
+  const files = sessionFiles(f).map((p) => {
+    const pv = filePreview(p);
+    return pv ? pv : { p, size: -1 };
+  });
+  return { text: String(text || '').slice(0, 60000), files };
+}
+// 从会话里看它动过哪些文件（这就是「交付在哪」的线索）
+function sessionFiles(jsonlPath) {
+  const set = new Set();
+  let txt = '';
+  try { txt = fs.readFileSync(jsonlPath, 'utf8'); } catch { return []; }
+  for (const line of txt.split('\n')) {
+    if (!line.trim()) continue;
+    if (line.indexOf('"function_call"') < 0) continue;
+    let o; try { o = JSON.parse(line); } catch { continue; }
+    if (o.type !== 'function_call') continue;
+    const nm = String(o.name || '');
+    if (!/^(Write|Edit|MultiEdit|NotebookEdit)$/i.test(nm)) continue;
+    let args = o.arguments;
+    if (typeof args === 'string') { try { args = JSON.parse(args); } catch { continue; } }
+    if (!args || typeof args !== 'object') continue;
+    const fp = args.file_path || args.filePath || args.path || '';
+    if (fp) set.add(String(fp).slice(0, 300));
+  }
+  return [...set].slice(0, 40);
+}
+// 产出文件的小内容：直接带回去，用户在网页上就能看、能存
+// 太大（>200KB）就不带内容，只报路径 —— 总控传不了大文件
+const FILE_PREVIEW_MAX = 200 * 1024;
+function filePreview(fp) {
+  try {
+    const st = fs.statSync(fp);
+    if (!st.isFile() || st.size > FILE_PREVIEW_MAX) return null;
+    const buf = fs.readFileSync(fp);
+    // 明显是二进制的就不带（网页上也没法看）
+    if (buf.includes(0)) return null;
+    return { p: String(fp).slice(0, 300), size: st.size, text: buf.toString('utf8').slice(0, FILE_PREVIEW_MAX) };
+  } catch { return null; }
+}
+// 开工前拍个目录快照（相对路径 -> 大小/修改时间），干完对比看多了哪些文件
+function dirSnapshot(dir, depth = 0, maxDepth = 3) {
+  const out = {};
+  if (depth > maxDepth) return out;
+  let es = [];
+  try { es = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const e of es) {
+    if (e.name === 'node_modules' || e.name === '.git' || e.name === '__pycache__') continue;
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) { Object.assign(out, dirSnapshot(full, depth + 1, maxDepth)); continue; }
+    if (!e.isFile()) continue;
+    try {
+      const st = fs.statSync(full);
+      out[path.relative(dir, full)] = st.size + ':' + Math.round(st.mtimeMs);
+    } catch {}
+    if (Object.keys(out).length > 2000) break;
+  }
+  return out;
+}
+// 干完活多出来的文件 = 这次的交付物
+function producedFiles(before, cwd) {
+  if (!before) return [];
+  const after = dirSnapshot(cwd);
+  const out = [];
+  for (const [rel, sig] of Object.entries(after)) {
+    const old = before[rel];
+    if (old === sig) continue;         // 没变
+    if (old !== undefined && old.split(':')[0] === sig.split(':')[0]) continue; // 只是改了时间、大小没变
+    const full = path.join(cwd, rel);
+    const pv = filePreview(full);
+    out.push(pv ? pv : { p: full, size: -1 });
+    if (out.length >= 40) break;
+  }
+  return out;
 }
 
 function wbCancel(id) {
@@ -713,7 +853,24 @@ async function runInWorkBuddy(cwd, prompt, cur) {
         if (o.cid) cur.session = String(o.cid).slice(0, 80);
         cur.via = 'client';
         const okay = s.success !== 0 && s.success !== false;
-        return { ok: okay, result: o.output || '', error: okay ? '' : (o.output || 'WorkBuddy 这次报的是没成功，但没有给原因') };
+        // 客户端不把答复写进 automation_runs，得去它的会话文件里取
+        let out = o.output || '';
+        let files = [];
+        if (!out && o.cid) {
+          const cr = clientResult(o.cid, cwd);
+          out = cr.text || '';
+          files = cr.files || [];
+        }
+        if (files.length) {
+          cur.buf.push({ t: 'info', s: `产出文件 ${files.length} 个：${files.slice(0, 5).join('、')}${files.length > 5 ? ' 等' : ''}` });
+          await flush(cur, false);
+        }
+        if (!out && okay) {
+          // 跑完了但没取到文字：说清楚，别让人以为白跑了
+          cur.buf.push({ t: 'err', s: `WorkBuddy 说完成了，但没找到这次的回答（会话 ${o.cid || '?'}）。可以到那台电脑的 WorkBuddy「自动化」里看这一轮的过程。` });
+          await flush(cur, false);
+        }
+        return { ok: okay, result: out, error: okay ? '' : (out || o.error || 'WorkBuddy 这次报的是没成功，但没有给原因'), files };
       }
     }
     if (!seen && Date.now() - t0 > GRACE) return { fallback: 'WorkBuddy 客户端 90 秒没接手（桌面端可能没开），这次先用命令行跑' };
@@ -730,7 +887,9 @@ async function runJob(job) {
   const cwd = expandHome(job.workdir) || WORKDIR;
   log(`领到任务 ${job.id}：${job.prompt.slice(0, 60)}${job.expert ? '｜专家 ' + job.expert : ''}${job.model ? '｜模型 ' + job.model : ''}`);
   const cur = current = { id: job.id, buf: [], session: '', resume: String(job.session || ''), resumeHome: job.sessionHome === 'client' ? 'client' : 'cli', via: '', stopped: false, expert: job.expert || '', model: job.model || '' };
-  let result = '', ok = false, error = '', cost;
+  let result = '', ok = false, error = '', cost, files = [];
+  // 开工前拍个快照，干完对比就知道多了哪些文件（交付物）
+  try { cur.filesBefore = dirSnapshot(cwd); } catch {}
   try {
     // 以前这里无脑 fs.mkdirSync：填错的路径会被悄悄建成空文件夹，任务在空壳里干完活，
     // 表面看不出问题，只觉得「没在 WorkBuddy 指定的目录里跑」。现在先检查，缺了就明确报错。
@@ -794,6 +953,9 @@ async function runJob(job) {
       }
     }
     ({ ok, result, error, cost } = r); const code = r.code === undefined ? 0 : r.code, stderr = r.stderr || '';
+    files = r.files || [];
+    // 命令行通道也要报产出文件：干活前后对比一下目录，看多了哪些文件
+    if (!files.length && ok) { try { files = producedFiles(cur.filesBefore, cwd); } catch {} }
     if (cur.stopped) { ok = false; error = '已按要求停下'; }
     else if (!result && !error && code !== 0) error = stderr.trim() || `退出码 ${code}`;
     else if (code !== 0 && !error && !ok) error = stderr.trim();
@@ -807,9 +969,10 @@ async function runJob(job) {
   // 先腾出手（总控收到结果就会派下一件），结果一定要交回去，网络不通就一直重试
   current = null;
   for (let n = 0; ; n++) {
-    try { await flush(cur, true, { ok, result, error, cost }); break; }
-    catch (e) { await sleep(Math.min(30000, 2000 * (n + 1))); }
+    try { await flush(cur, true, { ok, result, error, cost, files }); break; }
+    catch (e) { log('交结果失败，重试：' + (e && e.message ? e.message : e)); await sleep(Math.min(30000, 2000 * (n + 1))); }
   }
+  log('结果已交回总控');
 }
 
 // ---------- 自动更新 ----------
