@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync, execFile, execFileSync } = require('child_process');
 
-const VERSION = '1.11.2';
+const VERSION = '1.11.3';
 const arg = (k) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : undefined; };
 const CFG = arg('config') ? JSON.parse(fs.readFileSync(arg('config'), 'utf8').replace(/^\uFEFF/, '')) : {};
 const HUB = (arg('hub') || CFG.hub || process.env.FLEET_HUB || '').replace(/\/$/, '');
@@ -524,6 +524,56 @@ function stop() {
 }
 
 // 在 cwd 里跑一轮 CodeBuddy 命令行，边跑边把进展放进 cur.buf
+// ---------- 图片附件 ----------
+// 网页上可以带图一起派活。图片存在总控，这台领到活时下载到本地，
+// 再把本地路径写进指令里让 AI 直接读文件（CLI 没有传图片的参数，读本地文件最稳）。
+const IMG_DIR = path.join(os.homedir(), '.wb-fleet', 'imgs');
+const IMG_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp' };
+function imgExt(name, mime) {
+  const m = String(mime || '').toLowerCase();
+  if (IMG_EXT[m]) return IMG_EXT[m];
+  const e = String(name || '').match(/\.([a-z0-9]{2,5})$/i);
+  const x = (e ? e[1] : '').toLowerCase();
+  return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(x) ? (x === 'jpeg' ? 'jpg' : x) : 'png';
+}
+// 从总控下载一张图到本地，返回本地绝对路径
+async function fetchImage(im) {
+  try {
+    fs.mkdirSync(IMG_DIR, { recursive: true });
+    const id = String(im && im.id || '');
+    if (!/^[a-f0-9]{8,64}$/.test(id)) return null;
+    const r = await fetch(HUB + '/api/agent/img?id=' + encodeURIComponent(id), { headers: { 'x-fleet-key': KEY } });
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length) return null;
+    const ext = imgExt(im.name, im.mime);
+    // 文件名用图片自己的名字（安全化），方便 AI 认得出是哪张
+    const safe = String(im.name || '图片').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 60);
+    const full = path.join(IMG_DIR, id.slice(0, 12) + '_' + safe.replace(/\.[a-z0-9]{2,5}$/i, '') + '.' + ext);
+    fs.writeFileSync(full, buf);
+    return full;
+  } catch { return null; }
+}
+// 把任务里的图片都下下来，返回给指令用的说明文字
+async function fetchJobImages(job, cur) {
+  const list = Array.isArray(job && job.images) ? job.images.slice(0, 10) : [];
+  if (!list.length) return '';
+  const paths = [];
+  for (const im of list) {
+    const p = await fetchImage(im);
+    if (p) paths.push(p);
+  }
+  if (!paths.length) {
+    cur.buf.push({ t: 'err', s: '图片没下载下来（总控上可能已经过期了），这次只能按文字干。' });
+    return '';
+  }
+  cur.buf.push({ t: 'info', s: `图片已下载到本地：${paths.length} 张` });
+  await flush(cur, false);
+  return `\n\n【这次附带 ${paths.length} 张图片，已经下载到这台电脑上，请直接用读文件的方式看它们】：\n`
+    + paths.map((p, i) => `${i + 1}. ${p}`).join('\n')
+    + `\n（图片路径都在本机，直接打开看内容，然后按任务要求处理。）\n`;
+}
+
 async function runCli(cwd, prompt, cont, cur) {
   let result = '', ok = false, error = '', cost;
   const args = ['-p', '--output-format', 'stream-json', '-y'];
@@ -891,6 +941,9 @@ async function runJob(job) {
   // 开工前拍个快照，干完对比就知道多了哪些文件（交付物）
   try { cur.filesBefore = dirSnapshot(cwd); } catch {}
   try {
+    // 图片附件：先下到本地，指令里带上路径，AI 直接读文件看图
+    let imgNote = '';
+    try { imgNote = await fetchJobImages(job, cur); } catch {}
     // 以前这里无脑 fs.mkdirSync：填错的路径会被悄悄建成空文件夹，任务在空壳里干完活，
     // 表面看不出问题，只觉得「没在 WorkBuddy 指定的目录里跑」。现在先检查，缺了就明确报错。
     let has = false;
@@ -932,12 +985,13 @@ async function runJob(job) {
     // 升级任务除外：它要重启连接程序自己，绕客户端没意义还容易丢结果
     // 指定了会话也除外：客户端通道接不上旧会话
     let r = null;
+    const taskPrompt = job.prompt + imgNote; // 图片路径跟着指令走
     if (WB_ON && !job.cont && !job.session && job.kind !== 'upgrade') {
-      const w = await runInWorkBuddy(cwd, job.prompt, cur);
+      const w = await runInWorkBuddy(cwd, taskPrompt, cur);
       if (w && w.fallback) { cur.buf.push({ t: 'info', s: `${w.fallback}，这次改用命令行执行` }); await flush(cur, false); }
       else r = w;
     }
-    if (!r) r = await runCliResumable(cwd, job.prompt, job.cont, cur);
+    if (!r) r = await runCliResumable(cwd, taskPrompt, job.cont, cur);
     // 客户端建的会话，命令行读不到（会话库和登录态都不共用，实测报 No conversation found / Authentication required）：
     // 改成在客户端开一条新会话，把上一轮的结论当上文带过去，并在过程里说清楚，别让人以为上下文还在
     if (job.session && !r.ok && job.sessionCtx && WB_ON && job.kind !== 'upgrade') {

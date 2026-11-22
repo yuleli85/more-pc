@@ -452,6 +452,19 @@
     .fctl input#workdir{ width:100% !important; }
   }
 
+  /* 图片附件 */
+  .imgbox { margin-top:9px; border:1px dashed #cfe0f5; border-radius:12px; background:#f8fbff; padding:9px 10px; transition:.15s; }
+  .imgbox.drag { border-color:var(--primary); background:#eef5ff; }
+  .imglist { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+  .imglist:empty { display:none; }
+  .imglist .it { position:relative; width:78px; }
+  .imglist .it img { width:78px; height:78px; object-fit:cover; border-radius:9px; border:1px solid #dde8f7; background:#fff; display:block; }
+  .imglist .it .x { position:absolute; top:-5px; right:-5px; width:19px; height:19px; border-radius:50%; background:#ef4444; color:#fff; border:none; font-size:12px; line-height:1; cursor:pointer; padding:0; }
+  .imglist .it .nm { font-size:10px; color:#93a3b8; margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .imglist .it .sz { font-size:10px; color:#b6c2d2; }
+  .imgbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .imgbar .mini { flex:none; }
+
   /* 技能页：展开的文件清单 */
   .skfiles { margin:8px 0 2px; padding:8px 10px; border-radius:10px; background:#f8fbff; border:1px solid #e7effa; }
   .skfiles .fl { display:flex; flex-direction:column; gap:3px; }
@@ -671,6 +684,15 @@ function shell() {
               <span class="flab">任务说明</span>
               <div class="fctl col">
                 <textarea id="prompt" placeholder="要干什么？例如：把 ~/Downloads 里的发票按月份整理好，列个清单给我（Ctrl+Enter 发送）"></textarea>
+                <div id="imgBox" class="imgbox" style="display:none">
+                  <div id="imgList" class="imglist"></div>
+                  <div class="imgbar">
+                    <button type="button" class="mini" id="imgPick">＋ 加图片</button>
+                    <input type="file" id="imgFile" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" multiple style="display:none">
+                    <span class="muted" id="imgTip" style="font-size:12px">可以拖图片进来，也可以 Ctrl+V 粘贴。最多 10 张，单张 8MB。</span>
+                    <button type="button" class="mini danger" id="imgClear" style="margin-left:auto">全清掉</button>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="frow" style="border-bottom:0; padding-bottom:0">
@@ -799,6 +821,7 @@ function shell() {
   // 毛玻璃卡片会变成 position:fixed 的定位参照，弹层必须挪到 body 下，否则会跟着卡片偏移
   for (const id of ['sessModal', 'resModal', 'schedModal']) { const el = $('#' + id); if (el && el.parentElement !== document.body) document.body.appendChild(el); }
   $('#sendBtn').onclick = sendTask;
+  initImgUI();
   // 会话：默认新会话；选了一条旧会话就接着它的上下文做
   $('#sessPick').onclick = openSessModal;
   $('#sessClear').onclick = () => { sessPicked = null; renderSessBar(); };
@@ -1570,7 +1593,8 @@ function renderTasks() {
       + (t.src ? '<span class="chip">飞书表</span>' : '')
       + (t.schedName ? `<span class="chip" title="这条是定时任务到点自动发的：${esc(t.schedName)}">定时</span>` : '')
       + (t.expert ? `<span class="chip">专家 ${esc(expertName(t.expert))}</span>` : '')
-      + (t.model ? `<span class="chip">模型 ${esc(t.model)}</span>` : '');
+      + (t.model ? `<span class="chip">模型 ${esc(t.model)}</span>` : '')
+      + ((t.images || []).length ? `<span class="chip" title="${esc((t.images || []).map((i) => i.name).join('、'))}">📷 ${t.images.length} 张图</span>` : '');
     return `<div class="task ${t.id === selTask ? 'sel' : ''}${taskPicked.has(t.id) ? ' pick' : ''}" data-id="${t.id}">
       <input type="checkbox" class="tpick" data-tp="${t.id}" title="勾上，批量删" ${taskPicked.has(t.id) ? 'checked' : ''}>
       <div class="tcell"><div class="p" title="${esc(t.prompt)}">${esc(t.prompt)}</div>
@@ -1780,6 +1804,7 @@ function renderDetail() {
       ${live ? '<button id="stopAll" style="margin-left:auto">全部停下</button>' : ''}<button id="again" ${live ? '' : 'style="margin-left:auto"'}>再发一次</button><button id="next">接着这件做</button><button id="copyAll" title="把这件任务在各台上的结果合成一段文字复制走">复制全部结果</button></h2>
     ${d.after ? `<p class="muted">接在「${esc(d.afterPrompt)}」后面</p>` : ''}
     <div style="white-space:pre-wrap">${esc(d.prompt)}</div>
+    ${imgListBlock(d.images)}
     ${d.pending ? '<p class="muted" style="color:var(--amber)">能接的电脑现在都在忙，先排着，谁先空下来谁接。</p>' : ''}
     ${d.waiting ? '<p class="muted" style="color:var(--amber)">等上一步做完再开工，会带上它的结果，优先交给做上一步的那台（文件就在那台，不用同步）。</p>' : ''}
     ${d.note ? `<p class="muted">${esc(d.note)}</p>` : ''}
@@ -1893,6 +1918,86 @@ async function renderSessList() {
     renderSessBar();
   });
 }
+// ---------- 图片附件 ----------
+// 网页上可以带多张图一起派活：图片存到总控，各台电脑领到活时下载到本地再让 AI 读。
+const IMGS = []; // { id(本地临时), name, size, mime, data(base64), url(预览用) }
+const IMG_MAX_N = 10, IMG_MAX_ONE = 8 * 1024 * 1024;
+function imgBytes(b64) { return Math.ceil(b64.length * 3 / 4); }
+function renderImgs() {
+  const box = $('#imgBox'); if (!box) return;
+  box.style.display = IMGS.length ? '' : 'none';
+  const list = $('#imgList');
+  list.innerHTML = IMGS.map((im, i) => `<div class="it" title="${esc(im.name)}">
+    <img src="${im.url}" alt="${esc(im.name)}">
+    <button type="button" class="x" data-imgx="${i}" title="去掉这张">×</button>
+    <div class="nm">${esc(im.name)}</div>
+    <div class="sz">${Math.round(im.size / 1024)}KB</div>
+  </div>`).join('');
+  list.querySelectorAll('[data-imgx]').forEach(b => b.onclick = () => {
+    const i = +b.dataset.imgx;
+    const im = IMGS[i]; if (im) { try { URL.revokeObjectURL(im.url); } catch {} }
+    IMGS.splice(i, 1); renderImgs();
+  });
+}
+function imgTip(s, bad) {
+  const t = $('#imgTip'); if (!t) return;
+  t.textContent = s;
+  t.style.color = bad ? 'var(--red)' : '';
+}
+async function addImageFiles(files) {
+  if (!files || !files.length) return;
+  let over = 0, big = 0;
+  for (const f of Array.from(files)) {
+    if (IMGS.length >= IMG_MAX_N) { over++; continue; }
+    if (!/^image\//.test(f.type)) { imgTip(`「${f.name}」不是图片，跳过了`, true); continue; }
+    if (f.size > IMG_MAX_ONE) { big++; continue; }
+    try {
+      const data = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(String(r.result || '').split(',')[1] || '');
+        r.onerror = () => rej(new Error('读不出来'));
+        r.readAsDataURL(f);
+      });
+      if (!data) continue;
+      IMGS.push({ name: f.name || '图片', size: f.size, mime: f.type, data, url: URL.createObjectURL(f) });
+    } catch (e) { imgTip('有图片读不出来：' + e.message, true); }
+  }
+  renderImgs();
+  if (over) imgTip(`最多 ${IMG_MAX_N} 张，多出来的 ${over} 张没加`, true);
+  else if (big) imgTip(`单张不能超过 8MB，${big} 张太大了`, true);
+  else imgTip(`${IMGS.length} 张图，发出去时会一起带上`);
+}
+// 拖拽 / 粘贴
+function initImgUI() {
+  const ta = $('#prompt'), box = $('#imgBox');
+  if (!ta || !box) return;
+  $('#imgPick').onclick = () => $('#imgFile').click();
+  $('#imgFile').onchange = (e) => { addImageFiles(e.target.files); e.target.value = ''; };
+  $('#imgClear').onclick = () => { for (const im of IMGS) { try { URL.revokeObjectURL(im.url); } catch {} } IMGS.length = 0; renderImgs(); imgTip('清空了'); };
+  ['dragenter', 'dragover'].forEach(ev => box.addEventListener(ev, (e) => { e.preventDefault(); box.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach(ev => box.addEventListener(ev, (e) => { e.preventDefault(); if (ev === 'drop' || e.target === box) box.classList.remove('drag'); }));
+  box.addEventListener('drop', (e) => { const fs2 = e.dataTransfer && e.dataTransfer.files; if (fs2 && fs2.length) addImageFiles(fs2); });
+  ta.addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    const fs2 = [];
+    for (const it of items) if (it.type && it.type.startsWith('image/')) { const f = it.getAsFile(); if (f) fs2.push(f); }
+    if (fs2.length) { e.preventDefault(); addImageFiles(fs2); }
+  });
+  renderImgs();
+}
+
+// 详情页里的图片附件
+function imgListBlock(imgs) {
+  const list = (imgs || []).filter((x) => x && x.id);
+  if (!list.length) return '';
+  return `<div class="imglist" style="margin:10px 0">
+    ${list.map((im) => `<div class="it" title="${esc(im.name)}">
+      <img src="/api/img?id=${encodeURIComponent(im.id)}" alt="${esc(im.name)}" loading="lazy">
+      <div class="nm">${esc(im.name)}</div><div class="sz">${Math.round((im.size || 0) / 1024)}KB</div>
+    </div>`).join('')}
+  </div>`;
+}
 async function sendTask() {
   const prompt = $('#prompt').value.trim(); if (!prompt) return;
   $('#sendBtn').disabled = true;
@@ -1901,8 +2006,12 @@ async function sendTask() {
       ? { mode:'pool', prio: +$('#prio').value, prompt, targets: poolPicked(), split: sessPicked ? false : $('#split').checked, chain: sessPicked ? false : $('#chain').checked, after: AFTER && AFTER.id, git: $('#git').checked, cont: $('#cont').checked, workdir: $('#workdir').value.trim(), expert: $('#expert').value, model: $('#model').value }
       : { mode:'all', prompt, targets: sessPicked ? [sessPicked.machine] : targets(), git: $('#git').checked, cont: $('#cont').checked, workdir: $('#workdir').value.trim(), expert: $('#expert').value, model: $('#model').value };
     if (sessPicked) { body.session = sessPicked.session; body.sessionMachine = sessPicked.machine; }
+    if (IMGS.length) body.images = IMGS.map((im) => ({ name: im.name, mime: im.mime, data: im.data }));
     const t = await api('/api/tasks', { method:'POST', body: JSON.stringify(body) });
-    $('#prompt').value = ''; selTask = t.id; detail = null; AFTER = null; renderAfter();
+    $('#prompt').value = '';
+    for (const im of IMGS) { try { URL.revokeObjectURL(im.url); } catch {} }
+    IMGS.length = 0; renderImgs();
+    selTask = t.id; detail = null; AFTER = null; renderAfter();
     await refresh(); await loadDetail();
     if (t.warn) alert('已发出，降级执行：\n\n' + t.warn);
   } catch (e) { if (e.message !== '401') alert('没发出去：' + e.message); }

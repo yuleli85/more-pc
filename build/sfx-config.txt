@@ -1,5 +1,5 @@
 ;!@Install@!UTF-8!
-Title=WorkBuddy 总控 安装程序 v1.6.0
+Title=WorkBuddy 总控 安装程序 v1.7.0
 RunProgram="Install.cmd"
 GUIMode="2"
 ;!@InstallEnd@!

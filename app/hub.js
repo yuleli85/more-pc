@@ -22,6 +22,53 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const HERE = __dirname;
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// ---------- 图片附件 ----------
+// 网页上可以带多张图一起派活。图片存在总控，各台电脑领到活时下载到本地再干活
+// （CLI 没有传图片的参数，让它读本地文件最稳，两条通道都能用）。
+const IMG_DIR = path.join(DATA_DIR, 'imgs');
+fs.mkdirSync(IMG_DIR, { recursive: true });
+const IMG_MAX = 8 * 1024 * 1024;      // 单张最大 8MB
+const IMG_MAX_COUNT = 10;            // 一次最多 10 张
+const IMG_MAX_TOTAL = 30 * 1024 * 1024; // 一次最多 30MB
+const IMG_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp' };
+// 图片 id 只用十六进制，别让文件名带奇怪的东西
+const imgIdOk = (id) => /^[a-f0-9]{8,64}$/.test(String(id || ''));
+function imgFileOf(id) { return path.join(IMG_DIR, id); }
+function imgMetaOf(id) {
+  try { return JSON.parse(fs.readFileSync(imgFileOf(id) + '.json', 'utf8')); } catch { return null; }
+}
+// 存一张图：返回 {id, name, size, mime}
+function saveImage(taskId, idx, raw) {
+  const mime = String(raw.mime || raw.type || '').toLowerCase().trim();
+  const ext = IMG_TYPES[mime];
+  if (!ext) return { error: `不支持的图片格式：${mime || '未知'}（支持 PNG、JPG、GIF、WEBP、BMP）` };
+  const b64 = String(raw.data || '').replace(/^data:[^;]+;base64,/, '');
+  if (!/^[A-Za-z0-9+/=\r\n]+$/.test(b64)) return { error: '图片数据不对' };
+  let buf;
+  try { buf = Buffer.from(b64, 'base64'); } catch { return { error: '图片数据解码失败' }; }
+  if (!buf.length) return { error: '图片是空的' };
+  if (buf.length > IMG_MAX) return { error: `单张图片不能超过 ${Math.round(IMG_MAX / 1024 / 1024)}MB（这张 ${Math.round(buf.length / 1024 / 1024)}MB）` };
+  const id = crypto.randomBytes(12).toString('hex');
+  const name = String(raw.name || `图片${idx + 1}`).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 80) || `图片${idx + 1}`;
+  try {
+    fs.writeFileSync(imgFileOf(id), buf);
+    fs.writeFileSync(imgFileOf(id) + '.json', JSON.stringify({ id, name, size: buf.length, mime, taskId, at: Date.now() }));
+  } catch (e) { return { error: '图片存不下：' + e.message }; }
+  return { id, name, size: buf.length, mime };
+}
+// 任务删了，图也一起删
+function dropImages(taskId) {
+  try {
+    for (const f of fs.readdirSync(IMG_DIR)) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const m = JSON.parse(fs.readFileSync(path.join(IMG_DIR, f), 'utf8'));
+        if (m.taskId === taskId) { fs.rmSync(imgFileOf(m.id), { force: true }); fs.rmSync(path.join(IMG_DIR, f), { force: true }); }
+      } catch {}
+    }
+  } catch {}
+}
+
 // ---------- 日志（自己管文件，自动轮转）----------
 // 以前靠 run.cmd 把 stdout 重定向到 hub.log，日志只增不减 —— 有个死循环把它撑到 24MB。
 // 现在自己写文件：超过 20MB 就挪成 hub.log.1 重开一个，老的删掉。
@@ -234,7 +281,7 @@ const byId = (id) => tasks.find((x) => x.id === id);
 // ---------- 专家 / 模型 ----------
 // 连接程序把这两个值拼到命令行上：--agent <专家> --model <模型>。
 // 只有 1.7.0 以后的连接程序才认这两个字段；老连接程序会当没看见，所以按版本卡住，不让它"静默跑错"。
-const AGENT_LATEST = '1.11.2';
+const AGENT_LATEST = '1.11.3';
 const AGENT_MIN = '1.7.0'; // 1.7.0 起支持指定专家/模型；1.8.0 起会回报本机可干活目录
 const AGENT_SESSION_MIN = '1.10.1'; // 1.10.0 起支持「接着指定会话」＋回报客户端会话 id
 const AGENT_SKILLS_MIN = '1.11.0';  // 1.11.0 起支持技能共享（自动上传 / 自动安装）
@@ -441,6 +488,7 @@ function deleteTasks(ids) {
     if (unassigned(t) && !t.stopped) { t.stopped = true; t.note = '接的那件任务被删了，这步没开始'; }
   }
   const before = tasks.length;
+  for (const t of tasks) if (set.has(t.id)) dropImages(t.id); // 图片跟着任务一起删，别在硬盘上留一堆
   tasks = tasks.filter((t) => !set.has(t.id));
   saveNow();
   return { removed: before - tasks.length, stopped: [...new Set(stopped)] };
@@ -527,6 +575,8 @@ function dispatch(name, res) {
         sessionCtx: n.t.sessionCtx || '',   // 客户端会话接不上时，用它把上一轮结论带过去
         title: n.t.prompt.slice(0, 200),
         expert: nativeExpert ? wantExpert : '', model: native ? wantModel : '',
+        // 图片附件：连接程序收到后下载到本地，再让 AI 读本地文件
+        images: (n.t.images || []).map((im) => ({ id: im.id, name: im.name, size: im.size, mime: im.mime })),
       };
     }
   }
@@ -559,6 +609,7 @@ const summary = (t) => ({
   schedName: t.schedName || '', schedId: t.schedId || '',
   after: t.after || '', afterPrompt: t.after && byId(t.after) ? byId(t.after).prompt.slice(0, 60) : '', git: !!t.git,
   expert: t.expert || '', model: t.model || '',
+  images: (t.images || []).map((im) => ({ id: im.id, name: im.name, size: im.size, mime: im.mime })),
   runs: Object.fromEntries(Object.entries(t.runs).map(([n, r]) => [n, { status: r.status, startedAt: r.startedAt, endedAt: r.endedAt, error: r.error, dir: r.dir || '', session: r.session || '', via: r.via || '', expertNote: r.expertNote || '', modelNote: r.modelNote || '', files: (r.files || []).map((f) => (typeof f === 'string' ? { p: f, size: -1 } : { p: f.p, size: f.size, text: (f.text || '').slice(0, 200000) })), hasResult: !!(r.result && r.result.trim()) || (r.files || []).length > 0, last: lastText(r) }])),
 });
 // 会话索引：每次跑完都会把会话 id 记在 run 上（客户端通道和命令行通道都记）。
@@ -705,9 +756,26 @@ function makeTasks(b) {
     }
   }
   const made = [];
+  // 图片附件：一次最多 10 张、单张 8MB、合计 30MB
+  let imgs = [];
+  const rawImgs = Array.isArray(b.images) ? b.images.slice(0, IMG_MAX_COUNT + 1) : [];
+  if (rawImgs.length > IMG_MAX_COUNT) return { error: `一次最多带 ${IMG_MAX_COUNT} 张图` };
+  let imgTotal = 0;
+  for (let i = 0; i < rawImgs.length; i++) {
+    const r = saveImage(plist[0] ? 'pending' : 'pending', i, rawImgs[i] || {});
+    if (r.error) { dropImages('pending'); return { error: r.error }; }
+    imgs.push(r);
+    imgTotal += r.size;
+    if (imgTotal > IMG_MAX_TOTAL) { dropImages('pending'); return { error: `图片加起来不能超过 ${Math.round(IMG_MAX_TOTAL / 1024 / 1024)}MB` }; }
+  }
   plist.forEach((pr, i) => {
     const dep = mode === 'pool' && b.chain && i > 0 ? made[i - 1].id : after;
     const t = { id: crypto.randomBytes(6).toString('hex'), mode, pool: mode === 'pool' ? picked : [], after: dep, git: !!b.git, prio: [0, 1, 2].includes(+b.prio) ? +b.prio : 1, prompt: pr.slice(0, 20000), cont: !!b.cont, session: sessWanted, sessionMachine: sessMachine, sessionHome: sessHome, sessionCtx: sessCtx, workdir: lockedDir, expert, model, schedId: b.schedId || '', schedName: b.schedName || '', createdAt: Date.now() + i, runs: {} };
+    // 图片挂在第一个任务上（一次发一批活时，图片给第一件用）
+    if (i === 0 && imgs.length) {
+      t.images = imgs;
+      for (const im of imgs) { try { const mt = imgMetaOf(im.id); if (mt) mt.taskId = t.id; fs.writeFileSync(imgFileOf(im.id) + '.json', JSON.stringify(mt)); } catch {} }
+    }
     for (const n of targets) t.runs[n] = { status: 'queued', items: [] };
     tasks.push(t);
     made.push(t);
@@ -1277,6 +1345,32 @@ const server = http.createServer(async (req, res) => {
       catch { return send(res, 404, { error: '读不到技能正文' }); }
     }
 
+    // ----- 连接程序下载图片附件 -----
+    if (p === '/api/agent/img' && req.method === 'GET') {
+      const id = String(u.searchParams.get('id') || '');
+      if (!imgIdOk(id)) return send(res, 400, { error: '图片 id 不对' });
+      const m = imgMetaOf(id);
+      if (!m) return send(res, 404, { error: '没有这张图片' });
+      try {
+        const buf = fs.readFileSync(imgFileOf(id));
+        res.writeHead(200, { 'Content-Type': m.mime || 'application/octet-stream', 'Content-Length': buf.length, 'Cache-Control': 'no-store' });
+        return res.end(buf);
+      } catch { return send(res, 404, { error: '读不到这张图片' }); }
+    }
+
+    // ----- 网页看图（用网页登录口令鉴权，走 cookie）-----
+    if (p === '/api/img' && req.method === 'GET') {
+      const id = String(u.searchParams.get('id') || '');
+      if (!imgIdOk(id)) return send(res, 400, { error: '图片 id 不对' });
+      const m = imgMetaOf(id);
+      if (!m) return send(res, 404, { error: '没有这张图片' });
+      try {
+        const buf = fs.readFileSync(imgFileOf(id));
+        res.writeHead(200, { 'Content-Type': m.mime || 'application/octet-stream', 'Content-Length': buf.length, 'Cache-Control': 'no-store' });
+        return res.end(buf);
+      } catch { return send(res, 404, { error: '读不到这张图片' }); }
+    }
+
     // ----- 网页用 -----
     if (p === '/api/state' && req.method === 'GET') {
       const ms = [...machines.values()].map((m) => ({ name: m.name, os: m.os, host: m.host, cli: m.cli, workdir: m.workdir, dir: baseDirOf(m.name), dirCustom: !!machineDirs[m.name], dirs: m.dirs || [], cpu: m.cpu, online: online(m), busy: m.busy, idle: idle(m), lastSeen: m.lastSeen, agentVersion: m.agentVersion || '', agentsOk: agentSupports(m), needsLogin: !!m.needsLogin, experts: expertsFor(m) }));
@@ -1491,7 +1585,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, machine: n, id: s.name });
     }
     if (p === '/api/tasks' && req.method === 'POST') {
-      const b = await readBody(req);
+      const b = await readBody(req, 48 << 20); // 带图片时 body 会比较大
       const r = makeTasks(b);
       if (r.error) return send(res, 400, { error: r.error });
       return send(res, 200, { ...summary(r.made[0]), ids: r.made.map((t) => t.id), warn: r.warn });
