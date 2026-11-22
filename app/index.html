@@ -453,6 +453,8 @@
   }
 
   /* 图片附件 */
+  .imgtools { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:7px; }
+  .imgtools .mini { flex:none; }
   .imgbox { margin-top:9px; border:1px dashed #cfe0f5; border-radius:12px; background:#f8fbff; padding:9px 10px; transition:.15s; }
   .imgbox.drag { border-color:var(--primary); background:#eef5ff; }
   .imglist { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
@@ -464,6 +466,8 @@
   .imglist .it .sz { font-size:10px; color:#b6c2d2; }
   .imgbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .imgbar .mini { flex:none; }
+  /* 拖图片到输入框时的提示 */
+  .fctl.col.dragover textarea { border-color:var(--primary); box-shadow:0 0 0 3px rgba(37,99,235,.12); background:#f8fbff; }
 
   /* 技能页：展开的文件清单 */
   .skfiles { margin:8px 0 2px; padding:8px 10px; border-radius:10px; background:#f8fbff; border:1px solid #e7effa; }
@@ -684,13 +688,15 @@ function shell() {
               <span class="flab">任务说明</span>
               <div class="fctl col">
                 <textarea id="prompt" placeholder="要干什么？例如：把 ~/Downloads 里的发票按月份整理好，列个清单给我（Ctrl+Enter 发送）"></textarea>
+                <div class="imgtools">
+                  <button type="button" class="mini" id="imgPick" title="给这次活附带图片（可以多张）">📷 加图片</button>
+                  <input type="file" id="imgFile" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" multiple style="display:none">
+                  <span class="muted" id="imgTip" style="font-size:12px">可以拖图片进上面的输入框，也可以 Ctrl+V 粘贴截图。最多 10 张，单张 8MB。</span>
+                </div>
                 <div id="imgBox" class="imgbox" style="display:none">
                   <div id="imgList" class="imglist"></div>
                   <div class="imgbar">
-                    <button type="button" class="mini" id="imgPick">＋ 加图片</button>
-                    <input type="file" id="imgFile" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" multiple style="display:none">
-                    <span class="muted" id="imgTip" style="font-size:12px">可以拖图片进来，也可以 Ctrl+V 粘贴。最多 10 张，单张 8MB。</span>
-                    <button type="button" class="mini danger" id="imgClear" style="margin-left:auto">全清掉</button>
+                    <button type="button" class="mini danger" id="imgClear">全部清掉</button>
                   </div>
                 </div>
               </div>
@@ -1937,6 +1943,7 @@ function renderImgs() {
     const i = +b.dataset.imgx;
     const im = IMGS[i]; if (im) { try { URL.revokeObjectURL(im.url); } catch {} }
     IMGS.splice(i, 1); renderImgs();
+    if (!IMGS.length) imgTip('可以拖图片进上面的输入框，也可以 Ctrl+V 粘贴截图。最多 10 张，单张 8MB。');
   });
 }
 function imgTip(s, bad) {
@@ -1971,12 +1978,26 @@ async function addImageFiles(files) {
 function initImgUI() {
   const ta = $('#prompt'), box = $('#imgBox');
   if (!ta || !box) return;
+  const col = ta.parentElement; // 输入框那一整列（textarea + 工具条 + 图片区）
   $('#imgPick').onclick = () => $('#imgFile').click();
   $('#imgFile').onchange = (e) => { addImageFiles(e.target.files); e.target.value = ''; };
   $('#imgClear').onclick = () => { for (const im of IMGS) { try { URL.revokeObjectURL(im.url); } catch {} } IMGS.length = 0; renderImgs(); imgTip('清空了'); };
-  ['dragenter', 'dragover'].forEach(ev => box.addEventListener(ev, (e) => { e.preventDefault(); box.classList.add('drag'); }));
-  ['dragleave', 'drop'].forEach(ev => box.addEventListener(ev, (e) => { e.preventDefault(); if (ev === 'drop' || e.target === box) box.classList.remove('drag'); }));
-  box.addEventListener('drop', (e) => { const fs2 = e.dataTransfer && e.dataTransfer.files; if (fs2 && fs2.length) addImageFiles(fs2); });
+  // 拖图片进来：整列都是落点（图片区没图时是收着的，所以主要落在输入框上）
+  ['dragenter', 'dragover'].forEach(ev => col.addEventListener(ev, (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+    e.preventDefault(); e.stopPropagation();
+    col.classList.add('dragover'); box.classList.add('drag');
+  }));
+  ['dragleave', 'drop'].forEach(ev => col.addEventListener(ev, (e) => {
+    if (ev === 'dragleave' && e.relatedTarget && col.contains(e.relatedTarget)) return;
+    e.preventDefault(); e.stopPropagation();
+    col.classList.remove('dragover'); box.classList.remove('drag');
+  }));
+  col.addEventListener('drop', (e) => {
+    const fs2 = e.dataTransfer && e.dataTransfer.files;
+    if (fs2 && fs2.length) { e.preventDefault(); addImageFiles(fs2); }
+  });
+  // 粘贴截图：在输入框里 Ctrl+V
   ta.addEventListener('paste', (e) => {
     const items = e.clipboardData && e.clipboardData.items;
     if (!items) return;

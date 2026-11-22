@@ -57,13 +57,29 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
   const w = dom.window, doc = w.document;
   await sleep(2500);
 
-  console.log('\n[1] 图片区存在');
+  console.log('\n[1] 图片入口看得见（这个曾经被藏起来过）');
   ok(errs.length === 0, '没有 jsdom 报错' + (errs.length ? '：' + errs[0] : ''));
   ok(doc.querySelector('#imgBox'), '有图片区');
-  ok(doc.querySelector('#imgPick'), '有「加图片」按钮');
+  const pick = doc.querySelector('#imgPick');
+  ok(!!pick, '有「加图片」按钮');
+  // jsdom 不算布局，改查祖先链：只要没有祖先是 display:none，按钮就是看得见的
+  const hiddenAncestor = (el) => {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const st = (p.getAttribute('style') || '');
+      if (/display\s*:\s*none/i.test(st)) return p;
+      if (p.hidden) return p;
+    }
+    return null;
+  };
+  const ha = pick ? hiddenAncestor(pick) : 'x';
+  ok(!ha, '按钮没有被隐藏的容器盖住' + (ha ? '（藏在 ' + (ha.id || ha.className) + ' 里）' : ''));
+  ok(pick && pick.textContent.includes('加图片'), '按钮上有字：' + (pick && pick.textContent.trim()));
+  // 关键回归：按钮不能躲在初始隐藏的 #imgBox 里
+  ok(pick && !pick.closest('#imgBox'), '按钮不在隐藏的图片区里面');
+  ok(pick && pick.closest('.imgtools'), '按钮在常驻的工具条里');
   ok(doc.querySelector('#imgFile'), '有文件选择框');
   ok(doc.querySelector('#imgFile').accept.includes('image/png'), 'accept 限了图片类型');
-  ok(doc.querySelector('#imgBox').style.display === 'none', '没选图时是收着的');
+  ok(doc.querySelector('#imgBox').style.display === 'none', '没选图时图片区是收着的（但入口还在）');
 
   console.log('\n[2] 选图后出缩略图');
   // 用 jsdom 真实的 File + FileReader
@@ -95,6 +111,18 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
   await sleep(200);
   ok(doc.querySelectorAll('#imgList .it').length === 0, '清空了');
   ok(doc.querySelector('#imgBox').style.display === 'none', '图片区又收起来了');
+  ok(!hiddenAncestor(doc.querySelector('#imgPick')), '清空后「加图片」入口还在（不会被一起藏掉）');
+
+  console.log('\n[4.5] 拖图片到输入框能接住');
+  const dt = new w.DataTransfer();
+  dt.files = [mkFile('拖进来的.png')];
+  const dropEv = new w.Event('drop', { bubbles: true, cancelable: true });
+  dropEv.dataTransfer = dt;
+  doc.querySelector('#prompt').dispatchEvent(dropEv);
+  await sleep(500);
+  ok(doc.querySelectorAll('#imgList .it').length === 1, '拖进来的图收下了（' + doc.querySelectorAll('#imgList .it').length + '）');
+  doc.querySelector('#imgClear').click();
+  await sleep(200);
 
   console.log('\n[5] 派活时真的把图带上了');
   w.__f3 = mkFile('派活图.png');
