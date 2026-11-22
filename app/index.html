@@ -197,8 +197,10 @@
   .rprompt { white-space:pre-wrap; background:#f8fafc; border:1px solid var(--line); border-left:3px solid var(--primary-200); border-radius:var(--r-sm); padding:10px 12px; font-size:13px; line-height:1.7; color:var(--text2); max-height:130px; overflow:auto; }
   .rblk { border-top:1px solid var(--line); padding-top:12px; margin-top:14px; }
   .rblk:first-of-type { border-top:0; padding-top:0; margin-top:14px; }
+  .rblk.rpicked { background:linear-gradient(90deg,rgba(37,99,235,.045),transparent 70%); border-radius:9px; padding-left:9px; margin-left:-9px; }
   .rhead { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
   .rhead b { color:var(--text); font-size:13.5px; }
+  .rhead input[type=checkbox] { width:15px; height:15px; accent-color:var(--primary); cursor:pointer; flex:none; }
   .rtext { white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.75; color:var(--text2); background:#fcfdff; border-radius:var(--r-sm); padding:10px 12px; }
   /* 交付清单：产出/改动的文件 */
   .rfiles { margin-top:10px; border:1px solid #e3edfb; border-radius:10px; background:linear-gradient(180deg,#f7fbff,#fff); overflow:hidden; }
@@ -715,8 +717,10 @@ function shell() {
             </div>
           </div>
           <div class="card" style="margin-top:16px"><h2>任务 <span class="n" id="tcount"></span>
-            <span class="tbar"><button id="tPickAll">全选</button><button id="tPickDone" title="勾上已经跑完、没成、已停的那些，方便一次删掉">选中已结束</button><button id="tPickNone">清除</button><button id="tDel" class="danger" disabled>删除选中</button></span></h2>
-            <p class="muted" style="margin:0 0 8px">双击一条任务，直接弹出它各台的执行结果。</p><div id="tlist"></div></div>
+            <span class="tbar"><button id="tPickAll">全选</button><button id="tPickDone" title="勾上已经跑完、没成、已停的那些，方便一次删掉">选中已结束</button><button id="tPickNone">清除</button>
+              <button id="tCopySel" disabled title="把勾选的几件任务的执行结果合成一段文字复制走">复制选中结果</button>
+              <button id="tDel" class="danger" disabled>删除选中</button></span></h2>
+            <p class="muted" style="margin:0 0 8px">双击一条任务，直接弹出它各台的执行结果。勾选左边的框可以批量删除或批量复制结果。</p><div id="tlist"></div></div>
           <div id="detail"></div>
         </section>
       </main>
@@ -848,6 +852,7 @@ function shell() {
   $('#tPickDone').onclick = () => { taskPicked = new Set(state.tasks.filter(taskEnded).map(t => t.id)); paintTaskPick(); };
   $('#tPickNone').onclick = () => { taskPicked.clear(); paintTaskPick(); };
   $('#tDel').onclick = () => delTasks([...taskPicked]);
+  $('#tCopySel').onclick = () => copyPickedTasks();
   // 页面切换：任务 / 提示词
   document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => setView(b.dataset.view));
   $('#pReload').onclick = () => loadPrompts();
@@ -1131,6 +1136,39 @@ function taskEnded(t) {
   if (!rs.length) return !!t.stopped;
   return rs.every(r => ['done', 'failed', 'stopped'].includes(r.status));
 }
+// 复制选中的几件任务的执行结果
+// 列表里的是截断过的，这里逐件去取全文再合成一段
+async function copyPickedTasks() {
+  const ids = [...taskPicked];
+  if (!ids.length) return;
+  const btn = $('#tCopySel');
+  if (btn) btn.disabled = true;
+  try {
+    const parts = [];
+    for (const id of ids) {
+      let d = null;
+      try { d = detail && detail.id === id ? detail : await api(`/api/tasks/${id}`); } catch { continue; }
+      if (!d) continue;
+      const runs = Object.entries(d.runs || {});
+      const body = runs.length
+        ? runs.map(([n, r]) => {
+            const st = (ST[r.status] || r.status) + (r.startedAt && r.endedAt ? ' · ' + dur(r.startedAt, r.endedAt) : '');
+            const txt = runResultText(r) || emptyResultTip(r);
+            const files = (r.files || []).map((f) => (typeof f === 'string' ? f : f.p)).filter(Boolean);
+            return `  ── ${n} · ${st} ──\n${txt}`
+              + (files.length ? `\n  交付文件：${files.join('、')}` : '');
+          }).join('\n')
+        : '  （还没有电脑接手）';
+      parts.push(`══ 任务 ${d.prompt.slice(0, 120)} ══\n时间：${fmtT(d.createdAt)}${d.workdir ? `\n目录：${d.workdir}` : ''}\n${body}`);
+    }
+    if (!parts.length) { alert('这几件都没取到结果'); return; }
+    const text = parts.join('\n\n');
+    await copyText(text);
+    if (btn) flash(btn, `已复制 ${ids.length} 件`);
+  } catch (e) { alert('复制没成功：' + e.message); }
+  finally { if (btn) btn.disabled = false; paintTaskPick(); }
+}
+
 // 只改勾选状态，不整块重绘，免得每 2.5 秒刷新时把勾打乱
 function paintTaskPick() {
   const alive = new Set(state.tasks.map(t => t.id));
@@ -1145,6 +1183,11 @@ function paintTaskPick() {
   if (del) {
     del.disabled = !taskPicked.size;
     del.textContent = taskPicked.size ? `删除选中 ${taskPicked.size}` : '删除选中';
+  }
+  const cp = $('#tCopySel');
+  if (cp) {
+    cp.disabled = !taskPicked.size;
+    cp.textContent = taskPicked.size ? `复制选中结果 ${taskPicked.size}` : '复制选中结果';
   }
 }
 // 按钮点一下变「已复制」，1.5 秒后还原
@@ -1717,15 +1760,33 @@ function allResultText(d) {
   const body = Object.entries(d.runs).map(([n, r]) => {
     const st = (ST[r.status] || r.status) + (r.startedAt && r.endedAt ? ' · ' + dur(r.startedAt, r.endedAt) : '');
     const txt = runResultText(r) || emptyResultTip(r);
-    return `──── ${n} · ${st} ────\n${txt}`;
+    const files = (r.files || []).map((f) => (typeof f === 'string' ? f : f.p)).filter(Boolean);
+    return `──── ${n} · ${st} ────\n${txt}` + (files.length ? `\n交付文件：${files.join('、')}` : '');
   }).join('\n\n');
   return head + '\n\n' + (body || '（还没有电脑接手）');
 }
 // ---------- 双击任务：弹出各台的执行结果 ----------
 let resId = '', resDetail = null, resTimer = null;
+let resPicked = new Set(); // 结果弹窗里勾了哪几台
+
+// 把勾选的几台结果合成一段文字
+function pickedResultText(d, names) {
+  const head = [`任务：${d.prompt}`, `时间：${fmtT(d.createdAt)}`]
+    .concat(d.workdir ? [`目录：${d.workdir}`] : [])
+    .concat(d.expert ? [`专家：${expertName(d.expert)}`] : [])
+    .concat(d.model ? [`模型：${d.model}`] : []).join('\n');
+  const body = names.map((n) => {
+    const r = d.runs[n] || {};
+    const st = (ST[r.status] || r.status || '') + (r.startedAt && r.endedAt ? ' · ' + dur(r.startedAt, r.endedAt) : '');
+    const txt = runResultText(r) || emptyResultTip(r);
+    const files = (r.files || []).map((f) => (typeof f === 'string' ? f : f.p)).filter(Boolean);
+    return `──── ${n} · ${st} ────\n${txt}` + (files.length ? `\n交付文件：${files.join('、')}` : '');
+  }).join('\n\n');
+  return head + '\n\n' + body;
+}
 
 async function openResult(id) {
-  resId = id; resDetail = null;
+  resId = id; resDetail = null; resPicked = new Set();
   const m = $('#resModal');
   if (!m) return;
   m.style.display = 'flex';
@@ -1768,8 +1829,10 @@ function paintResult() {
     .join(' · ');
   const blocks = runs.length ? runs.map(([n, r]) => {
     const txt = runResultText(r) || emptyResultTip(r);
-    return `<div class="rblk">
-      <div class="rhead"><b>${esc(n)}</b><span class="chip s-${r.status}">${ST[r.status] || r.status}</span>
+    return `<div class="rblk ${resPicked.has(n) ? 'rpicked' : ''}">
+      <div class="rhead">
+        <input type="checkbox" class="rpick" data-rp="${esc(n)}" title="勾上这台，批量复制" ${resPicked.has(n) ? 'checked' : ''}>
+        <b>${esc(n)}</b><span class="chip s-${r.status}">${ST[r.status] || r.status}</span>
         <span class="muted">${dur(r.startedAt, r.endedAt)}</span>
         ${r.dir ? `<span class="muted" title="${esc(r.dir)}">${esc(r.dir)}</span>` : ''}
         ${r.via === 'client' ? '<span class="chip">客户端跑的</span>' : r.via === 'cli' ? '<span class="chip">命令行跑的</span>' : ''}
@@ -1779,18 +1842,37 @@ function paintResult() {
       <div class="rtext" style="${r.status === 'failed' ? 'color:var(--red)' : ''}">${esc(txt)}</div>
     </div>`;
   }).join('') : '<div class="empty" style="margin-top:10px">还没有电脑接手。</div>';
+  const pickedCount = resPicked.size;
   box.innerHTML = `<h2 style="margin-top:0">执行结果 <span class="n">${meta}${live ? ' · <span style="color:var(--amber)">还在干</span>' : ''}</span>
       <button id="resClose" style="margin-left:auto">关</button></h2>
     <div class="rprompt">${esc(d.prompt)}</div>
     ${blocks}
     <div class="row" style="margin-top:18px; padding-top:14px; border-top:1px solid var(--line)">
       <button class="primary" id="resCopyAll" title="各台结果合成一段文字复制走">复制全部结果</button>
+      <button id="resCopyPicked" ${pickedCount ? '' : 'disabled'} title="把勾选的几台结果合成一段复制走">复制选中${pickedCount ? ' ' + pickedCount + ' 台' : ''}</button>
+      <button id="resPickAll" class="mini">${pickedCount >= runs.length && runs.length ? '取消全选' : '全选'}</button>
       <span class="muted" style="font-size:12px">Esc 或点外面关掉${live ? '；在跑会自动刷新' : ''}</span></div>`;
   box.scrollTop = keep;
   $('#resClose').onclick = closeResult;
   $('#resCopyAll').onclick = async () => {
     try { await copyText(allResultText(d)); flash($('#resCopyAll')); } catch { alert('复制没成功，请手动选中文字复制'); }
   };
+  $('#resCopyPicked').onclick = async () => {
+    const names = [...resPicked].filter((n) => d.runs[n]);
+    if (!names.length) return;
+    try { await copyText(pickedResultText(d, names)); flash($('#resCopyPicked'), `已复制 ${names.length} 台`); }
+    catch { alert('复制没成功，请手动选中文字复制'); }
+  };
+  $('#resPickAll').onclick = () => {
+    if (resPicked.size >= runs.length) resPicked.clear();
+    else for (const [n] of runs) resPicked.add(n);
+    paintResult();
+  };
+  box.querySelectorAll('.rpick').forEach(cb => cb.onchange = () => {
+    const n = cb.dataset.rp;
+    cb.checked ? resPicked.add(n) : resPicked.delete(n);
+    paintResult();
+  });
   box.querySelectorAll('[data-rcopy]').forEach(b => b.onclick = async () => {
     const r = d.runs[b.dataset.rcopy]; if (!r) return;
     try { await copyText(runResultText(r) || emptyResultTip(r)); flash(b); } catch { alert('复制没成功，请手动选中文字复制'); }
